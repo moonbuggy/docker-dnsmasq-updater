@@ -1,0 +1,4 @@
+docker
+paramiko
+python_hosts
+scp
