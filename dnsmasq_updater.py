@@ -381,7 +381,7 @@ class DockerHandler():
 		hostnames = [container.attrs['Config']['Hostname']]
 		labels = container.labels
 		extra_hosts = container.attrs['HostConfig']['ExtraHosts']
-		print('extra_hosts: %s' % extra_hosts)
+		self.logger.debug('extra_hosts: %s', extra_hosts)
 		if extra_hosts:
 			hostnames.append(extra_hosts)
 
@@ -437,19 +437,25 @@ class DockerHandler():
 		if (event['Type'] == 'network') and \
 			(self.network in event['Actor']['Attributes']['name']) and \
 			(event['Action'] in {'connect', 'disconnect'}):
-			container = self.client.containers.get(event['Actor']['Attributes']['container'])
-			network = event['Actor']['Attributes']['name']
-			names = self.get_hostnames(container)
-			self.logger.debug('gotten hostnames: %s', names)
+			try:
+				container = self.client.containers.get(event['Actor']['Attributes']['container'])
+			except docker.errors.NotFound:
+				self.logger.warning('Container %s not found.', event['Actor']['Attributes']['container'])
+				container = None
 
-			if event['Action'] in 'connect':
-				self.logger.info('Detected %s connecting to \'%s\' network. (%s)', \
-					container.name, network, names)
-				self.hosts_updater.add_host(names, write=True)
-			elif event['Action'] in 'disconnect':
-				self.logger.info('Detected %s disconnecting from \'%s\' network. (%s)', \
-					container.name, network, names)
-				self.hosts_updater.del_host(names, write=True)
+			if container is not None:
+				network = event['Actor']['Attributes']['name']
+				names = self.get_hostnames(container)
+				self.logger.debug('gotten hostnames: %s', names)
+
+				if event['Action'] in 'connect':
+					self.logger.info('Detected %s connecting to \'%s\' network. (%s)', \
+						container.name, network, names)
+					self.hosts_updater.add_host(names, write=True)
+				elif event['Action'] in 'disconnect':
+					self.logger.info('Detected %s disconnecting from \'%s\' network. (%s)', \
+						container.name, network, names)
+					self.hosts_updater.del_host(names, write=True)
 
 		# trigger on container start
 		elif (event['Type'] == 'container') and (event['status'] in {'start', 'stop'}) \
