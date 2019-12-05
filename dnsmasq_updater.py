@@ -437,6 +437,7 @@ class DockerHandler():
 		if (event['Type'] == 'network') and \
 			(self.network in event['Actor']['Attributes']['name']) and \
 			(event['Action'] in {'connect', 'disconnect'}):
+
 			try:
 				container = self.client.containers.get(event['Actor']['Attributes']['container'])
 			except docker.errors.NotFound:
@@ -460,10 +461,8 @@ class DockerHandler():
 		# trigger on container start
 		elif (event['Type'] == 'container') and (event['status'] in {'start', 'stop'}) \
 			and ('dnsmasq.updater.enable' in event['Actor']['Attributes']):
+
 			container = self.client.containers.get(event['Actor']['ID'])
-			print(json.dumps(event, indent=4))
-			if container.labels['dnsmasq.updater.enable']:
-				print('SHOULD ABORT HERE')
 			names = self.get_hostnames(container)
 			self.logger.debug('gotten hostname: %s', names)
 
