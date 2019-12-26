@@ -355,13 +355,18 @@ class DockerHandler():
 
 	client = None
 
-	def __init__(self, hosts_updater, network, log_level):
+	def __init__(self, hosts_updater, network, log_level, s6_fd):
 		self.logger = get_logger(self.__class__.__name__, log_level)
 
 		self.hosts_updater = hosts_updater
 		self.network = network
 
 		self.hostnames = []
+
+		if s6_fd:
+			self.s6_fd = int(s6_fd)
+		else:
+			self.s6_fd = False
 
 	def get_client(self):
 		''' create the Docker client object '''
@@ -484,6 +489,13 @@ class DockerHandler():
 
 		self.hosts_updater.add_hosts(self.hostnames, write=True)
 
+		if self.s6_fd:
+			import os
+			self.logger.info('Signalling readiness to s6 overlay.')
+			os.write(self.s6_fd, '\n'.encode())
+		else:
+			self.logger.debug('Ready but signalling disabled.')
+
 		events = self.client.events(decode=True)
 
 		while True:
@@ -507,10 +519,11 @@ class ConfigHandler():
 			'login':'',
 			'password':'',
 			'key':'',
-			'file':'/opt/etc/hosts',
-			'remote_cmd':'service restart_dnsmasq',
+			'file':'',
+			'remote_cmd':'',
 			'temp_file':'/run/dnsmasq-updater/hosts.temp',
-			'log_level':self.log_level
+			'log_level':self.log_level,
+			's6_fd':False
 		}
 
 		self.args = []
@@ -610,12 +623,15 @@ class ConfigHandler():
 			help='the file (including path) to write on the dnsmasq server')
 		parser.add_argument(
 			'-r', '--remote_cmd', action='store', metavar='COMMAND',
-			help='the update command to execute on the dnsmasq server '\
-			' (default \'%(default)s\')')
+			help='the update command to execute on the dnsmasq server')
 		parser.add_argument(
 			'-t', '--temp_file', action='store', metavar='FILE',
 			help='the local file (including path) for temporary hosts file ' \
 			'(default \'%(default)s\')')
+		parser.add_argument(
+			'--s6_fd', action='store', metavar='INT',
+			help='set to an integer file descriptor to enable signalling readiness ' \
+			'to s6 overlay (default \'%(default)s\')')
 		self.args = parser.parse_args()
 
 		self.logger.debug('Parsed command line:\n%s', json.dumps(vars(self.args), indent=4))
@@ -678,7 +694,7 @@ def main():
 	args = config.get_args()
 	file_handler = FileHandler(**vars(args))
 	hosts_updater = HostsHandler(file_handler, args.domain, args.ip, args.temp_file, args.log_level)
-	docker_handler = DockerHandler(hosts_updater, args.network, args.log_level)
+	docker_handler = DockerHandler(hosts_updater, args.network, args.log_level, args.s6_fd)
 	docker_handler.run()
 
 if __name__ == '__main__':

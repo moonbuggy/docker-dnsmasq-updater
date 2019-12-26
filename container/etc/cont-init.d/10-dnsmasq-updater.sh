@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/with-contenv /bin/sh
 
 CONFIG_FILE=/conf/dnsmasq_updater.conf
 
@@ -40,6 +40,7 @@ if $(env | grep -q DMU_); then
 	else
 		sed -i "s!^remote_command.*!remote_command=\'service restart_dnsmasq\'!" $CONFIG_FILE
 	fi
+
+	sed -i "s!^s6_fd.*!s6_fd=5!" $CONFIG_FILE
 fi
 
-exec "$@"

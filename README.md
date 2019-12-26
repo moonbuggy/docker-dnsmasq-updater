@@ -26,7 +26,7 @@ Currently the updater is built for a standalone Docker host. It only allows one 
 usage: dnsmasq_updater.py [-h] [-c FILE] [--debug] [-i IP] [-d DOMAIN]
                           [-n NETWORK] [-s SERVER] [-P PORT] [-l USERNAME]
                           [-k FILE] [-p PASSWORD] [-f FILE] [-r COMMAND]
-                          [-t FILE]
+                          [-t FILE] [--s6_fd INT]
 
 Docker Dnsmasq Updater
 
@@ -53,10 +53,11 @@ optional arguments:
                         server
   -r COMMAND, --remote_cmd COMMAND
                         the update command to execute on the dnsmasq server
-                        (default 'service restart_dnsmasq')
   -t FILE, --temp_file FILE
                         the local file (including path) for temporary hosts
                         file (default '/run/dnsmasq-updater/hosts.temp')
+  --s6_fd INT           set to an integer file descriptor to enable signalling
+                        readiness to s6 overlay (default 'False')
 ```
 
 Any command line parameters take precedence over settings in `dnsmasq_updater.conf`.
@@ -99,6 +100,7 @@ Almost all the command line parameters (see Usage) can be set with enviornment v
 * `DMU_KEY`         - full path to SSH key file
 * `DMU_REMOTE_FILE` - full path to the hosts file to update on the dnsmasq server
 * `DMU_REMOTE_CMD`  - remote command to execute to restart/update dnsmasq, defaults to `service restart_dnsmasq`
+* `DMU_DEBUG`       - set `True` to enable debug log output
 
 ### Setup on dnsmasq server
 

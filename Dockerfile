@@ -1,13 +1,61 @@
-FROM python:3.8.0-slim-buster
+ARG PYTHON_VERSION=3.7
+ARG APP_PATH=/app
+ARG VIRTUAL_ENV=${APP_PATH}/venv
 
-RUN pip install docker python_hosts paramiko scp
+# build the virtual environment
+#
+FROM python:${PYTHON_VERSION}-alpine as builder
 
-COPY dnsmasq_updater.py /
-COPY dnsmasq_updater.conf /conf/
-COPY docker-entrypoint.sh /
+ARG VIRTUAL_ENV
+ARG APP_PATH
 
-RUN chmod +x /docker-entrypoint.sh
+ENV PATH="${VIRTUAL_ENV}/bin:$PATH" \
+	PYTHONDONTWRITEBYTECODE=1 \
+	PYTHONUNBUFFERED=1
 
-ENTRYPOINT ["/docker-entrypoint.sh"]
+RUN apk add --no-cache \
+		gcc \
+		libffi-dev \
+		make \
+		musl-dev \
+		openssl-dev \
+		py3-virtualenv
 
-CMD ["python", "-u", "dnsmasq_updater.py"]
+WORKDIR $APP_PATH
+
+COPY requirements.txt ./
+
+RUN python3 -m venv $VIRTUAL_ENV \
+	&& pip install --no-cache-dir --upgrade pip \
+	&& pip3 install --no-cache-dir -r requirements.txt \
+	&& rm -f requirements.txt \
+	&& ln -sf /usr/bin/python3 ${VIRTUAL_ENV}/bin/python3
+
+COPY dnsmasq_updater.py ./
+
+# build the final image
+#
+FROM moonbuggy2000/alpine-s6:3.10.3
+
+ARG PYTHON_VERSION
+ARG VIRTUAL_ENV
+ARG APP_PATH
+
+ENV	APP_PATH="${APP_PATH}" \
+	PATH="${VIRTUAL_ENV}/bin:$PATH" \
+	PYTHONPATH="${VIRTUAL_ENV}/lib/python${PYTHON_VERSION}/site-packages/" \
+	PYTHONDONTWRITEBYTECODE=1 \
+	PYTHONUNBUFFERED=1
+
+RUN apk add --no-cache \
+		python3=~$PYTHON_VERSION
+
+WORKDIR ${APP_PATH}
+
+COPY --from=builder ${APP_PATH}/ ./
+COPY ./container/ /
+COPY ./dnsmasq_updater.conf /conf/
+
+ENTRYPOINT ["/init"]
+
+HEALTHCHECK --start-period=30s --timeout=10s CMD ${APP_PATH}/healthcheck.sh

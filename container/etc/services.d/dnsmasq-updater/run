@@ -1,0 +1,13 @@
+#!/usr/bin/with-contenv /bin/sh
+
+DEBUG_STRING=''
+
+if [ ! -z ${DMU_DEBUG+set} ]; then
+	case ${DMU_DEBUG} in
+		true|True)
+			DEBUG_STRING='--debug'
+			;;
+	esac
+fi
+
+${APP_PATH}/dnsmasq_updater.py -c /conf/dnsmasq_updater.conf ${DEBUG_STRING}
