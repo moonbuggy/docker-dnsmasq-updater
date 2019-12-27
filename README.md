@@ -84,7 +84,7 @@ Put `dnsmasq_updater.conf` in `/etc/` or in the same directory as the script (wh
 docker run -d --name dnsmasq-updater -v /var/run/docker.sock:/var/run/docker.sock moonbuggy2000/dnsmasq-updater
 ```
 
-If you're using a config file instead of environment variables (see below) you'll need to persist it with `-v <conf volume>:/conf/`. If you're using an SSH key for authentication you can put the key in the `/conf/` folder to persist it.
+If you're using a config file instead of environment variables (see below) you'll need to persist it with `-v <conf volume>:/app/conf/dnsmasq_updater.conf`. If you're using an SSH key for authentication you can persist and use the `/app/keys/` folder.
 
 #### Docker environment varaibles
 

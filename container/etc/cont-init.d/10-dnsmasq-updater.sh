@@ -1,6 +1,6 @@
 #!/usr/bin/with-contenv /bin/sh
 
-CONFIG_FILE=/conf/dnsmasq_updater.conf
+CONFIG_FILE=${APP_PATH}/conf/dnsmasq_updater.conf
 
 if $(env | grep -q DMU_); then
 
@@ -36,9 +36,9 @@ if $(env | grep -q DMU_); then
 		sed -i "s!^file.*!file=${DMU_REMOTE_FILE}!" $CONFIG_FILE
 	fi
 	if [ ! -z ${DMU_REMOTE_CMD} ]; then
-		sed -i "s!^remote_command.*!remote_command=${DMU_REMOTE_CMD}!" $CONFIG_FILE
+		sed -i "s!^remote_cmd.*!remote_cmd=${DMU_REMOTE_CMD}!" $CONFIG_FILE
 	else
-		sed -i "s!^remote_command.*!remote_command=\'service restart_dnsmasq\'!" $CONFIG_FILE
+		sed -i "s!^remote_cmd.*!remote_cmd=service restart_dnsmasq!" $CONFIG_FILE
 	fi
 
 	sed -i "s!^s6_fd.*!s6_fd=5!" $CONFIG_FILE

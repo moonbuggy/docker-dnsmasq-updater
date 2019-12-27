@@ -103,7 +103,7 @@ class FileHandler():
 				self.params.server_ip = socket.getaddrinfo(self.params.server, None)[0][4][0]
 			except (ValueError, socket.gaierror):
 				self.logger.error('Server (%s) cannot be found.', self.params.server)
-				sys.exit()
+				sys.exit(1)
 
 	def verify_key(self):
 		''' verify and open key file or error on failure '''
@@ -120,10 +120,10 @@ class FileHandler():
 					self.logger.info('Found valid encrypted RSA key.')
 				except SSHException:
 					self.logger.error('Password for key is not valid.')
-					sys.exit()
+					sys.exit(1)
 			else:
 				self.logger.error('Encrypted RSA key, requires password.')
-				sys.exit()
+				sys.exit(1)
 		except SSHException:
 			try:
 				self.logger.debug('Testing if key is DSA.')
@@ -137,13 +137,13 @@ class FileHandler():
 						self.logger.info('Found valid encrypted DSA key.')
 					except SSHException:
 						self.logger.error('No valid password for DSA key.')
-						sys.exit()
+						sys.exit(1)
 				else:
 					self.logger.error('Encrypted DSA key, requires password.')
-					sys.exit()
+					sys.exit(1)
 			except SSHException:
 				self.logger.error('Key is not valid RSA or DSA.')
-				sys.exit()
+				sys.exit(1)
 
 
 	def open_ssh(self):
@@ -163,7 +163,7 @@ class FileHandler():
 
 		except AuthenticationException:
 			self.logger.error('Could not authenticate with remote device.')
-			sys.exit()
+			sys.exit(1)
 
 	def open_scp(self):
 		''' prepare SCP to use SSH transport '''
@@ -186,13 +186,14 @@ class FileHandler():
 			self.scp.get(self.params.file, local_path=self.params.temp_file)
 		except SCPException:
 			self.logger.error('Remote hosts file does not exist.')
-			sys.exit()
+			sys.exit(1)
 		self.close_scp()
 
 	def put_hostfile(self):
 		''' put the local hosts file on the remote device '''
 
 		self.logger.info('Uploading remote hosts file: %s', self.params.file)
+		self.logger.debug('temp_file: %s, remote_path: %s', self.params.temp_file, self.params.file)
 		self.open_scp()
 		self.scp.put(self.params.temp_file, remote_path=self.params.file)
 		self.close_scp()
@@ -234,11 +235,13 @@ class FileHandler():
 		''' execute command to update dnsmasq on remote device '''
 
 		self.open_ssh()
+		remote_cmd = self.params.remote_cmd.strip('\'"')
 		try:
-			self.ssh.exec_command(self.params.remote_cmd)
+			self.logger.debug('remote_cmd: %s', remote_cmd)
+			self.ssh.exec_command(remote_cmd)
 			self.logger.info('Restarted dnsmasq on remote device.')
 		except SSHException:
-			self.logger.error('Failed to execute remote command: %s', self.params.remote_cmd)
+			self.logger.error('Failed to execute remote command: %s', remote_cmd)
 		self.ssh.close()
 
 class HostsHandler():
@@ -376,7 +379,7 @@ class DockerHandler():
 			self.client.ping()
 		except requests.exceptions.ConnectionError:
 			self.logger.error('Could not open Docker socket.')
-			sys.exit()
+			sys.exit(1)
 
 		self.logger.info('Connected to Docker socket.')
 
@@ -641,34 +644,38 @@ class ConfigHandler():
 
 		if self.args.login == '':
 			self.logger.error('No login name specified.')
-			sys.exit()
+			sys.exit(1)
 
 		if self.args.key == '':
 			if self.args.password == '':
 				self.logger.error('No password or key specified.')
-				sys.exit()
+				sys.exit(1)
 		else:
 			if not path.exists(self.args.key):
 				self.logger.error('Key file (%s) does not exist.', self.args.key)
-				sys.exit()
+				sys.exit(1)
 
 		if self.args.ip == '':
 			self.logger.error('No host IP specified.')
-			sys.exit()
+			sys.exit(1)
 		else:
 			try:
 				ipaddress.ip_address(self.args.ip)
 			except ValueError:
 				self.logger.error('Specified host IP (%s) is invalid.', self.args.ip)
-				sys.exit()
+				sys.exit(1)
 
 		if self.args.server == '':
 			self.logger.error('No remote server specified.')
-			sys.exit()
+			sys.exit(1)
 
 		if self.args.file == '':
 			self.logger.error('No remote file specified.')
-			sys.exit()
+			sys.exit(1)
+
+		if self.args.remote_cmd == '':
+			self.logger.error('No remote command specified.')
+			sys.exit(1)
 
 		if not path.exists(path.dirname(self.args.temp_file)):
 			try:

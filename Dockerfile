@@ -31,6 +31,9 @@ RUN python3 -m venv $VIRTUAL_ENV \
 	&& rm -f requirements.txt \
 	&& ln -sf /usr/bin/python3 ${VIRTUAL_ENV}/bin/python3
 
+RUN mkdir ${APP_PATH}/keys \
+	&& mkdir ${APP_PATH}/conf
+
 COPY dnsmasq_updater.py ./
 
 # build the final image
@@ -54,7 +57,7 @@ WORKDIR ${APP_PATH}
 
 COPY --from=builder ${APP_PATH}/ ./
 COPY ./container/ /
-COPY ./dnsmasq_updater.conf /conf/
+COPY ./dnsmasq_updater.conf ./conf/
 
 ENTRYPOINT ["/init"]
 

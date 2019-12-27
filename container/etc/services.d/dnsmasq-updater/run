@@ -10,4 +10,4 @@ if [ ! -z ${DMU_DEBUG+set} ]; then
 	esac
 fi
 
-${APP_PATH}/dnsmasq_updater.py -c /conf/dnsmasq_updater.conf ${DEBUG_STRING}
+${APP_PATH}/dnsmasq_updater.py -c ${APP_PATH}/conf/dnsmasq_updater.conf ${DEBUG_STRING}
