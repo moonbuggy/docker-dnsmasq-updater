@@ -1,5 +1,5 @@
 # Docker Dnsmasq Updater
-Automatically update a remote hosts file with Docker containers
+Automatically update a remote hosts file with Docker container hostnames
 
 ## Rationale
 
@@ -86,6 +86,12 @@ docker run -d --name dnsmasq-updater -v /var/run/docker.sock:/var/run/docker.soc
 
 If you're using a config file instead of environment variables (see below) you'll need to persist it with `-v <conf volume>:/app/conf/dnsmasq_updater.conf`. If you're using an SSH key for authentication you can persist and use the `/app/keys/` folder.
 
+#### Tags
+
+To minimize the Docker image size, and to theoretically improve run times (I haven't benchmarked it), a binary build is available, tagged as `binary`.
+
+Other tags are built around the uncompiled Python script.
+
 #### Docker environment varaibles
 
 Almost all the command line parameters (see Usage) can be set with enviornment variables:
@@ -106,7 +112,7 @@ Almost all the command line parameters (see Usage) can be set with enviornment v
 
 If you have an external storage device attached to your router it makes sense to keep the hosts file the updater generates there, to minimize writes to the router's onboard storage.
 
-As an example, if you're using AsusWRT/Entware you can easily configure the router to include this external file by writing to `/opt/etc/hosts` and adding the following to both `/jffs/scripts/hosts.postconf`:
+As an example, if you're using AsusWRT/Entware you can easily configure the router to include this external file by writing to `/opt/etc/hosts` and adding the following to `/jffs/scripts/hosts.postconf`:
 
 ```
 # for remote hosts updates

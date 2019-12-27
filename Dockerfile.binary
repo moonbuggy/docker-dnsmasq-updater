@@ -1,0 +1,54 @@
+ARG PYTHON_VERSION=3.7
+ARG APP_PATH=/app
+ARG VIRTUAL_ENV=${APP_PATH}/venv
+
+# build the binary
+#
+FROM alpine:3.10.3 AS builder
+
+ARG APP_PATH
+ARG PYTHON_VERSION
+
+RUN apk add --no-cache \
+		chrpath \
+		gcc \
+		libffi-dev \
+		make \
+		musl-dev \
+		openssl-dev \
+		python3=~${PYTHON_VERSION} \
+		python3-dev=~${PYTHON_VERSION}
+
+WORKDIR $APP_PATH
+
+COPY requirements.txt ./
+
+RUN pip3 install --no-cache-dir --upgrade pip \
+	&& pip3 install --no-cache-dir -r requirements.txt
+
+RUN pip3 install --no-cache-dir nuitka==0.6.5
+
+COPY dnsmasq_updater.py ./
+
+RUN python3 -m nuitka --follow-imports --standalone dnsmasq_updater.py
+
+# build the final image
+#
+FROM moonbuggy2000/alpine-s6:3.10.3
+
+ARG APP_PATH
+
+ENV	APP_PATH="${APP_PATH}"
+
+WORKDIR $APP_PATH
+
+COPY --from=builder ${APP_PATH}/dnsmasq_updater.dist/ ./
+COPY ./container/ /
+COPY ./dnsmasq_updater.conf ${APP_PATH}/conf/
+
+RUN mkdir ./keys \
+	&& ln -s ./dnsmasq_updater ./dnsmasq_updater.py
+
+ENTRYPOINT ["/init"]
+
+HEALTHCHECK --start-period=30s --timeout=10s CMD ${APP_PATH}/healthcheck.sh
