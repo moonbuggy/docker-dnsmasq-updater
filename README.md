@@ -5,7 +5,7 @@ Automatically update a remote hosts file with Docker container hostnames
 
 If you have a LAN with your router using dnsmasq for local DNS you may find yourself frequently updating a hosts file as you add or remove Docker containers. The currently available options for automating this typically require you to put Docker containers in a subdomain (e.g. *.docker.local) and/or, if you want to keep the containers in the top level domain (i.e. *.local), installing a full-fledged name server on the router and syncing it with the same in a container on the Docker host.
 
-Docker Dnsmasq Updater allows host names to be added or removed automatically without added complexity or resource demands on the router. It can be run as a standalone script on the Docker host or in a container, it only needs access to the Docker socket and SSH/SCP access to the router (or any device providing local DNS with a hosts file).
+Docker Dnsmasq Updater allows host names to be added or removed automatically without added complexity or resource demands on the router. It can be run as a standalone script on the Docker host or in a container, it only needs access to the Docker socket and SSH access to the router (or any device providing local DNS with a hosts file).
 
 This script has been built with an AsusWRT/Entware router in mind, but should work with any device running dnsmasq or using a hosts file.
 
@@ -24,9 +24,9 @@ Currently the updater is built for a standalone Docker host. It only allows one 
 
 ```
 usage: dnsmasq_updater.py [-h] [-c FILE] [--debug] [-i IP] [-d DOMAIN]
-                          [-n NETWORK] [-s SERVER] [-P PORT] [-l USERNAME]
-                          [-k FILE] [-p PASSWORD] [-f FILE] [-r COMMAND]
-                          [-t FILE] [--s6_fd INT]
+                          [-D PATH] [-n NETWORK] [-s SERVER] [-P PORT]
+                          [-l USERNAME] [-k FILE] [-p PASSWORD] [-f FILE]
+                          [-r COMMAND] [-t FILE] [--ready_fd INT]
 
 Docker Dnsmasq Updater
 
@@ -38,14 +38,17 @@ optional arguments:
   -i IP, --ip IP        IP for the DNS record
   -d DOMAIN, --domain DOMAIN
                         domain/zone for the DNS record (default 'docker')
+  -D SOCKET, --docker_socket SOCKET
+                        path to the docker socket (default
+                        'unix://var/run/docker.sock')
   -n NETWORK, --network NETWORK
                         Docker network to monitor
   -s SERVER, --server SERVER
                         dnsmasq server address
-  -P PORT, --port PORT  port for SSH/SCP on the dnsmasq server (default '22')
+  -P PORT, --port PORT  port for SSH on the dnsmasq server (default '22')
   -l USERNAME, --login USERNAME
                         login name for the dnsmasq server
-  -k FILE, --key FILE   identity/key file for SSH/SCP to the dnsmasq server
+  -k FILE, --key FILE   identity/key file for SSH to the dnsmasq server
   -p PASSWORD, --password PASSWORD
                         password for the dnsmasq server OR for an encrypted
                         SSH key
@@ -56,17 +59,19 @@ optional arguments:
   -t FILE, --temp_file FILE
                         the local file (including path) for temporary hosts
                         file (default '/run/dnsmasq-updater/hosts.temp')
-  --s6_fd INT           set to an integer file descriptor to enable signalling
-                        readiness to s6 overlay (default 'False')
+  --ready_fd INT        set to an integer file descriptor to enable signalling
+                        readiness by writing a new line to that file
+                        descriptor (default 'False')
+
 ```
 
 Any command line parameters take precedence over settings in `dnsmasq_updater.conf`.
 
-The SSH/SCP connection requires either a login/password combination or a login/key combination. If using a key that is encrypted any password parameter supplied will be used for the key, not the login name.
+The SSH connection requires either a login/password combination or a login/key combination. If using a key that is encrypted any password parameter supplied will be used for the key, not the login name.
 
 ## Setup
 
-Docker Dnsmasq Updater requires at least Python 3.4 and the docker, paramiko, python_hosts and scp modules.
+Docker Dnsmasq Updater requires at least Python 3.4 and the docker, paramiko and python_hosts modules.
 
 The script can be run standalone on the Docker host or in a Docker container, so long as it has access to the Docker socket it's happy.
 
@@ -88,9 +93,9 @@ If you're using a config file instead of environment variables (see below) you'l
 
 #### Tags
 
-To minimize the Docker image size, and to theoretically improve run times (I haven't benchmarked it), a binary build is available, tagged as `binary`.
+To minimize the Docker image size, and to theoretically improve run times (I haven't benchmarked it), the default build is binary, tagged as `latest` and `binary`.
 
-Other tags are built around the uncompiled Python script.
+A build using the uncompiled Python script is available, tagged `script`.
 
 #### Docker environment varaibles
 
@@ -153,3 +158,9 @@ Docker Dnsmasq Updater will pull Traefik hostnames set on containers via the `tr
 As all containers joining a monitored network are considered valid, if you monitor a user-defined network that Traefik uses you don't need to set any `dnsmasq.updater` enviornment variables at all, it gets what it needs from the network and Traefik environment variables.
 
 This scenario provides the easiest/laziest configuration route, with no Docker Dnsmasq Updater specific cofiguration required on containers.
+
+## Links
+
+GitHub: https://github.com/moonbuggy/docker-dnsmasq-updater
+
+Docker Hub: https://hub.docker.com/r/moonbuggy2000/dnsmasq-updater

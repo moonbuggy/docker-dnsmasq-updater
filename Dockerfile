@@ -26,7 +26,7 @@ WORKDIR $APP_PATH
 COPY requirements.txt ./
 
 RUN python3 -m venv $VIRTUAL_ENV \
-	&& pip install --no-cache-dir --upgrade pip \
+	&& pip3 install --no-cache-dir --upgrade pip \
 	&& pip3 install --no-cache-dir -r requirements.txt \
 	&& rm -f requirements.txt \
 	&& ln -sf /usr/bin/python3 ${VIRTUAL_ENV}/bin/python3
@@ -34,7 +34,8 @@ RUN python3 -m venv $VIRTUAL_ENV \
 RUN mkdir ${APP_PATH}/keys \
 	&& mkdir ${APP_PATH}/conf
 
-COPY dnsmasq_updater.py ./
+COPY ./dnsmasq_updater.py ./dnsmasq_updater
+COPY ./dnsmasq_updater.conf ./conf/
 
 # build the final image
 #
@@ -57,8 +58,7 @@ WORKDIR ${APP_PATH}
 
 COPY --from=builder ${APP_PATH}/ ./
 COPY ./container/ /
-COPY ./dnsmasq_updater.conf ./conf/
 
 ENTRYPOINT ["/init"]
 
-HEALTHCHECK --start-period=30s --timeout=10s CMD ${APP_PATH}/healthcheck.sh
+HEALTHCHECK --start-period=10s --timeout=10s CMD ${APP_PATH}/healthcheck.sh

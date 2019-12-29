@@ -12,6 +12,9 @@ if $(env | grep -q DMU_); then
 	else
 		sed -i "s!^domain.*!domain=docker!" $CONFIG_FILE
 	fi
+    if [ ! -z ${DMU_DOCKER_SOCKET} ]; then
+        sed -i "s!^docker_socket.*!docker_socket=${DMU_DOCKER_SOCKET}!" $CONFIG_FILE
+    fi
 	if [ ! -z ${DMU_NETWORK} ]; then
 		sed -i "s!^network.*!network=${DMU_NETWORK}!" $CONFIG_FILE
 	fi
@@ -41,6 +44,6 @@ if $(env | grep -q DMU_); then
 		sed -i "s!^remote_cmd.*!remote_cmd=service restart_dnsmasq!" $CONFIG_FILE
 	fi
 
-	sed -i "s!^s6_fd.*!s6_fd=5!" $CONFIG_FILE
+	sed -i "s!^ready_fd.*!ready_fd=5!" $CONFIG_FILE
 fi
 
