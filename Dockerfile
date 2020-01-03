@@ -1,3 +1,4 @@
+ARG ALPINE_VERSION=3.10.3
 ARG PYTHON_VERSION=3.7
 ARG APP_PATH=/app
 ARG VIRTUAL_ENV=${APP_PATH}/venv
@@ -9,7 +10,7 @@ FROM python:${PYTHON_VERSION}-alpine as builder
 ARG VIRTUAL_ENV
 ARG APP_PATH
 
-ENV PATH="${VIRTUAL_ENV}/bin:$PATH" \
+ENV	PATH="${VIRTUAL_ENV}/bin:$PATH" \
 	PYTHONDONTWRITEBYTECODE=1 \
 	PYTHONUNBUFFERED=1
 
@@ -39,7 +40,7 @@ COPY ./dnsmasq_updater.conf ./conf/
 
 # build the final image
 #
-FROM moonbuggy2000/alpine-s6:3.10.3
+FROM moonbuggy2000/alpine-s6:${ALPINE_VERSION}
 
 ARG PYTHON_VERSION
 ARG VIRTUAL_ENV

@@ -3,7 +3,7 @@ Automatically update a remote hosts file with Docker container hostnames
 
 ## Rationale
 
-If you have a LAN with your router using dnsmasq for local DNS you may find yourself frequently updating a hosts file as you add or remove Docker containers. The currently available options for automating this typically require you to put Docker containers in a subdomain (e.g. *.docker.local) and/or, if you want to keep the containers in the top level domain (i.e. *.local), installing a full-fledged name server on the router and syncing it with the same in a container on the Docker host.
+If you have a LAN with your router using dnsmasq for local DNS you may find yourself frequently updating a hosts file as you add or remove Docker containers. The currently available options for automating this typically require you to put Docker containers in a subdomain (e.g. *.docker.local) and/or, if you want to keep the containers in the top level domain (e.g. *.local), installing a full-fledged name server on the router and syncing it with the same in a container on the Docker host.
 
 Docker Dnsmasq Updater allows host names to be added or removed automatically without added complexity or resource demands on the router. It can be run as a standalone script on the Docker host or in a container, it only needs access to the Docker socket and SSH access to the router (or any device providing local DNS with a hosts file).
 
@@ -11,6 +11,7 @@ This script has been built with an AsusWRT/Entware router in mind, but should wo
 
 ## What It Does
 
+- Runs on the Docker host OR in a container
 - On load, scans all running containers for a `dnsmasq.updater.enable` label
 - Optionally, on load, scans a specified network for running containers
 - After loading, monitors the Docker socket for containers starting/stopping and optionally connecting/disconnecting to a specified network
@@ -75,6 +76,8 @@ Docker Dnsmasq Updater requires at least Python 3.4 and the docker, paramiko and
 
 The script can be run standalone on the Docker host or in a Docker container, so long as it has access to the Docker socket it's happy.
 
+You do not need to both install it on the host and run the container, it would in fact be a bad idea to do so. Choose one or the other, whichever you feel works best for you.
+
 ### Installation on Docker host
 
 Install requirements: `pip3 install -r requirements.txt`
@@ -93,11 +96,11 @@ If you're using a config file instead of environment variables (see below) you'l
 
 #### Tags
 
-To minimize the Docker image size, and to theoretically improve run times (I haven't benchmarked it), the default build is binary, tagged as `latest` and `binary`.
+To minimize the Docker image size, and to theoretically improve run times (I haven't benchmarked it because I believe it runs fast enough either way), the default build is binary, tagged as `latest` and `binary`.
 
 A build using the uncompiled Python script is available, tagged `script`.
 
-#### Docker environment varaibles
+#### Docker environment variables
 
 Almost all the command line parameters (see Usage) can be set with enviornment variables:
 
@@ -142,7 +145,7 @@ If you're using a key instead of a password you'll need to add the appropriate p
 
 ### Setup for other Docker containers
 
-To enable Docker Dnsmasq Updater for a container there are two environment variables to use:
+To enable Docker Dnsmasq Updater for an individual container there are two labels that can be set:
 
 * `dnsmasq.updater.enable` - set this to "true"
 * `dnsmasq.updater.host`   - set this to the hostname you want to use
@@ -153,7 +156,7 @@ If you choose to monitor a user-defined Docker network then `dnsmasq.updater.ena
 
 ### Use with Traefik
 
-Docker Dnsmasq Updater will pull Traefik hostnames set on containers via the `traefik.http.routers.*` environment variable. 
+Docker Dnsmasq Updater will pull Traefik hostnames set on containers via the ``traefik.http.routers.<router>.rule=Host(`<host>`)`` label. 
 
 As all containers joining a monitored network are considered valid, if you monitor a user-defined network that Traefik uses you don't need to set any `dnsmasq.updater` enviornment variables at all, it gets what it needs from the network and Traefik environment variables.
 
