@@ -158,7 +158,7 @@ If you choose to monitor a user-defined Docker network then `dnsmasq.updater.ena
 
 Docker Dnsmasq Updater will pull Traefik hostnames set on containers via the ``traefik.http.routers.<router>.rule=Host(`<host>`)`` label. 
 
-As all containers joining a monitored network are considered valid, if you monitor a user-defined network that Traefik uses you don't need to set any `dnsmasq.updater` enviornment variables at all, it gets what it needs from the network and Traefik environment variables.
+As all containers joining a monitored network are considered valid, if you monitor a user-defined network that Traefik uses you don't need to set any `dnsmasq.updater.*` labels at all, it gets what it needs from the network and Traefik labels.
 
 This scenario provides the easiest/laziest configuration route, with no Docker Dnsmasq Updater specific cofiguration required on containers.
 

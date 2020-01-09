@@ -83,6 +83,7 @@ class RemoteHandler():
 
 		if self.params.key != '':
 			self.logger.debug('self.params.key: %s', self.params.key)
+			self.key = False
 			self.verify_key()
 
 		self.get_clean_hosts()
@@ -122,64 +123,43 @@ class RemoteHandler():
 	def verify_key(self):
 		''' verify and open key file or error on failure '''
 
-		self.key = self.check_rsa()
+		self.check_key('RSA')
 		if not self.key:
-			self.key = self.check_dsa()
+			self.check_key('DSA')
 			if not self.key:
 				self.logger.error('No usable RSA or DSA key found. Halting.')
 				sys.exit(1)
 
-	def check_rsa(self):
-		''' return key if key is RSA, otherwise return False '''
+	def check_key(self, algorithm):
+		''' sets self.key if self.params.key is valid for the algorithm '''
 
-		self.logger.debug('Testing if key is RSA.')
+		if algorithm == 'RSA':
+			algo_class = RSAKey
+		elif algorithm == 'DSA':
+			algo_class = DSSKey
+		else:
+			raise Exception('check_key() works with \'RSA\' or \'DSA\' only.')
+
+		self.logger.debug('Testing if key is %s.', algorithm)
 		try:
-			key = RSAKey.from_private_key_file(self.params.key)
+			key = algo_class.from_private_key_file(self.params.key)
 		except PasswordRequiredException:
 			if self.params.password != '':
-				self.logger.debug('Decrypting RSA key.')
+				self.logger.debug('Decrypting %s key.', algorithm)
 				try:
-					key = RSAKey.from_private_key_file(self.params.key, password=self.params.password)
+					key = algo_class.from_private_key_file(self.params.key, password=self.params.password)
 				except SSHException:
 					self.logger.error('Password for key is not valid.')
 				else:
-					self.logger.info('Found valid encrypted RSA key.')
-					return key
+					self.logger.info('Found valid encrypted %s key.', algorithm)
+					self.key = key
 			else:
-				self.logger.error('Encrypted RSA key, requires password.')
+				self.logger.error('Encrypted %s key, requires password.', algorithm)
 		except SSHException:
-			return False
+			self.key = False
 		else:
-			self.logger.info('Found valid RSA key.')
-			return key
-
-		return False
-
-	def check_dsa(self):
-		''' return key if key is DSA, otherwise return False '''
-
-		self.logger.debug('Testing if key is DSA.')
-		try:
-			key = DSSKey.from_private_key_file(self.params.key)
-		except PasswordRequiredException:
-			if self.params.password != '':
-				self.logger.debug('Decrypting DSA key.')
-				try:
-					key = DSSKey.from_private_key_file(self.params.key, password=self.params.password)
-				except SSHException:
-					self.logger.error('No valid password for DSA key.')
-				else:
-					self.logger.info('Found valid encrypted DSA key.')
-					return key
-			else:
-				self.logger.error('Encrypted DSA key, requires password.')
-		except SSHException:
-			return False
-		else:
-			self.logger.info('Found valid DSA key.')
-			return key
-
-		return False
+			self.logger.info('Found valid %s key.', algorithm)
+			self.key = key
 
 	def open_ssh(self):
 		'''
