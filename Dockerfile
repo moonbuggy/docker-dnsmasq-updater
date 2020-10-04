@@ -1,5 +1,5 @@
-ARG ALPINE_VERSION=3.10.3
-ARG PYTHON_VERSION=3.7
+ARG ALPINE_VERSION=3.12.0
+ARG PYTHON_VERSION=3.8
 ARG APP_PATH=/app
 ARG VIRTUAL_ENV=${APP_PATH}/venv
 
@@ -46,20 +46,23 @@ ARG PYTHON_VERSION
 ARG VIRTUAL_ENV
 ARG APP_PATH
 
-ENV	APP_PATH="${APP_PATH}" \
-	PATH="${VIRTUAL_ENV}/bin:$PATH" \
-	PYTHONPATH="${VIRTUAL_ENV}/lib/python${PYTHON_VERSION}/site-packages/" \
-	PYTHONDONTWRITEBYTECODE=1 \
-	PYTHONUNBUFFERED=1
-
-RUN apk add --no-cache \
-		python3=~$PYTHON_VERSION
+ENV PATH="${VIRTUAL_ENV}/bin:$PATH"
 
 WORKDIR ${APP_PATH}
+
+RUN apk add --no-cache \
+		python3=~$PYTHON_VERSION \
+	&& add-contenv \
+		APP_PATH=${APP_PATH} \
+		PYTHON_VERSION=${PYTHON_VERSION} \
+		VIRTUAL_ENV=${VIRTUAL_ENV} \
+		PYTHONPATH=${VIRTUAL_ENV}/lib/python${PYTHON_VERSION}/site-packages/ \
+		PYTHONDONTWRITEBYTECODE=1 \
+		PYTHONUNBUFFERED=1
 
 COPY --from=builder ${APP_PATH}/ ./
 COPY ./container/ /
 
 ENTRYPOINT ["/init"]
 
-HEALTHCHECK --start-period=10s --timeout=10s CMD ${APP_PATH}/healthcheck.sh
+HEALTHCHECK --start-period=10s --timeout=10s CMD /healthcheck.sh
