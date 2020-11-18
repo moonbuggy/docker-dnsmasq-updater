@@ -19,15 +19,15 @@ This script has been built with an AsusWRT/Entware router in mind, but should wo
 - Updates a remote hosts file
 - Restarts a remote dnsmasq server
 
-Currently the updater is built for a standalone Docker host. It only allows one IP to be specified for any host it finds.
+Currently the updater is built for a standalone Docker host, generally only working with a single host IP (with the exception of `extra_hosts`).
 
 ## Usage
 
 ```
 usage: dnsmasq_updater.py [-h] [-c FILE] [--debug] [-i IP] [-d DOMAIN]
-                          [-D PATH] [-n NETWORK] [-s SERVER] [-P PORT]
+                          [-D SOCKET] [-n NETWORK] [-s SERVER] [-P PORT]
                           [-l USERNAME] [-k FILE] [-p PASSWORD] [-f FILE]
-                          [-r COMMAND] [-t FILE] [--ready_fd INT]
+                          [-r COMMAND] [-t SECONDS] [--ready_fd INT]
 
 Docker Dnsmasq Updater
 
@@ -57,18 +57,19 @@ optional arguments:
                         server
   -r COMMAND, --remote_cmd COMMAND
                         the update command to execute on the dnsmasq server
-  -t FILE, --temp_file FILE
-                        the local file (including path) for temporary hosts
-                        file (default '/run/dnsmasq-updater/hosts.temp')
-  --ready_fd INT        set to an integer file descriptor to enable signalling
-                        readiness by writing a new line to that file
-                        descriptor (default 'False')
-
+  -t SECONDS, --delay SECONDS
+                        delay for writes to the dnsmasq server (default '10')
+  --ready_fd INT        set to an integer to enable signalling readiness by
+                        writing a newline to that integer file descriptor
 ```
 
 Any command line parameters take precedence over settings in `dnsmasq_updater.conf`.
 
 The SSH connection requires either a login/password combination or a login/key combination. If using a key that is encrypted any password parameter supplied will be used for the key, not the login name.
+
+The write delay (`--delay`) is useful because in some cases we expect to see multiple events in reasonably rapid succession, such as when a container is re-started or multiple containers are started together as part of a stack. The remote hosts file will be updated _\<delay> seconds_ after the last change to the script's local copy of hosts file. Set this to `0` to disable the delay.
+
+There's a hidden `--local_write_delay` argument, similar to `--delay`, which mediates the delay from a Docker event triggering a change to the local hosts file being written. This is useful during extremely rapid changes to the hosts configuration, primarily during dnsmasq-updater's startup/initilazation as it actively scans for containers to populate an empty dataset. This defaults to `3` and can disabled by `0`.
 
 ## Setup
 
@@ -114,6 +115,7 @@ Almost all the command line parameters (see Usage) can be set with enviornment v
 * `DMU_KEY`         - full path to SSH key file
 * `DMU_REMOTE_FILE` - full path to the hosts file to update on the dnsmasq server
 * `DMU_REMOTE_CMD`  - remote command to execute to restart/update dnsmasq, defaults to `service restart_dnsmasq`
+* `DMU_DELAY`       - delay in seconds before writing remote hosts file, defaults to `10`
 * `DMU_DEBUG`       - set `True` to enable debug log output
 
 ### Setup on dnsmasq server
@@ -154,9 +156,11 @@ The updater will also add `hostname` and any `extra_hosts` attributes set for a 
 
 If you choose to monitor a user-defined Docker network then `dnsmasq.updater.enable` isn't strictly necessary either. The udpater assumes any container connecting to the monitored network is a container that you want working DNS for.
 
+Any defined `extra_hosts` will use be given the IP from that definition.
+
 ### Use with Traefik
 
-Docker Dnsmasq Updater will pull Traefik hostnames set on containers via the ``traefik.http.routers.<router>.rule=Host(`<host>`)`` label. 
+Docker Dnsmasq Updater will pull Traefik hostnames set on containers via the ``traefik.http.routers.<router>.rule=Host(`<hostname>`)`` label, including multiple hostnames specified in the ``Host(`<hostname1>`) || Host(`<hostname2>`)`` form.
 
 As all containers joining a monitored network are considered valid, if you monitor a user-defined network that Traefik uses you don't need to set any `dnsmasq.updater.*` labels at all, it gets what it needs from the network and Traefik labels.
 

@@ -1,5 +1,5 @@
-ARG ALPINE_VERSION=3.10.3
-ARG PYTHON_VERSION=3.7
+ARG ALPINE_VERSION=3.12.0
+ARG PYTHON_VERSION=3.8
 ARG APP_PATH=/app
 
 # build the binary
@@ -16,6 +16,7 @@ RUN apk add --no-cache \
 		make \
 		musl-dev \
 		openssl-dev \
+		py3-pip \
 		python3=~${PYTHON_VERSION} \
 		python3-dev=~${PYTHON_VERSION}
 
@@ -25,7 +26,7 @@ COPY requirements.txt ./
 
 RUN pip3 install --no-cache-dir --upgrade pip \
 	&& pip3 install --no-cache-dir -r requirements.txt \
-	&& pip3 install --no-cache-dir nuitka==0.6.5
+	&& pip3 install --no-cache-dir nuitka==0.6.9.1
 
 COPY dnsmasq_updater.py ./
 
@@ -41,13 +42,14 @@ COPY ./dnsmasq_updater.conf dnsmasq_updater.dist/conf/
 FROM moonbuggy2000/alpine-s6:${ALPINE_VERSION}
 
 ARG APP_PATH
-ENV APP_PATH="${APP_PATH}"
 
 WORKDIR $APP_PATH
 
 COPY --from=builder ${APP_PATH}/dnsmasq_updater.dist/ ./
 COPY ./container/ /
 
+RUN echo "APP_PATH=${APP_PATH}" >> /etc/contenv_extra
+
 ENTRYPOINT ["/init"]
 
-HEALTHCHECK --start-period=10s --timeout=10s CMD ${APP_PATH}/healthcheck.sh
+HEALTHCHECK --start-period=10s --timeout=10s CMD /healthcheck.sh
