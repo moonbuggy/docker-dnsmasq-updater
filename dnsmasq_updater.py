@@ -6,17 +6,21 @@ Docker Dnsmasq Updater
 Use the Docker socket to update a remote dnsmasq server with container hostnames
 '''
 
-from os import path, makedirs, write
+import os
 import sys
 import signal
 import logging
 import argparse
 import configparser
-import errno
 import json
 import socket
 import ipaddress
+import tempfile
+import re
+
+from threading import Timer
 from types import SimpleNamespace
+from collections import defaultdict
 
 import docker
 from python_hosts import Hosts, HostsEntry
@@ -26,7 +30,7 @@ from paramiko.ssh_exception import SSHException, AuthenticationException, Passwo
 ## list possible configuration file locations in the order they should
 ## be tried, use first match
 CONFIG_FILE = 'dnsmasq_updater.conf'
-CONFIG_PATHS = [path.dirname(path.realpath(__file__)), '/etc/', '/conf/']
+CONFIG_PATHS = [os.path.dirname(os.path.realpath(__file__)), '/etc/', '/conf/']
 
 DEFAULT_LOG_LEVEL = logging.INFO
 
@@ -35,7 +39,7 @@ STDOUT_HANDLER.setFormatter(
 	logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
 
 def signal_handler(_sig, _frame):
-	''' Handle SIGINT cleanly. '''
+	''' handle SIGINT cleanly '''
 
 	print('\nSignal interrupt. Exiting.')
 	sys.exit(0)
@@ -47,7 +51,7 @@ loggers = {}
 def get_logger(class_name, log_level):
 	''' get logger objects for individual classes '''
 
-	name = path.splitext(path.basename(__file__))[0]
+	name = os.path.splitext(os.path.basename(__file__))[0]
 	if log_level == logging.DEBUG:
 		name = '.'.join([name, class_name])
 
@@ -63,45 +67,59 @@ def get_logger(class_name, log_level):
 
 	return logger
 
-class RemoteHandler():
-	''' Handle getting/putting/cleaning of local and remote hosts files '''
+class ResettableTimer():
+	'''
+	a timer class so we can delay writes to the external device
+	to allow for multiple Docker events in a short space of time
+	without hammering the device
+	'''
 
-	args = {}
-	block_start = '### dnsmasq updater start ###'
+	def __init__(self, delay, function):
+		self.running = False
+		self.delay = delay
+		self.function = function
+		self.timer = Timer(self.delay, self.function)
 
-	def __init__(self, **kwargs):
+	def __set(self):
+		self.timer = Timer(self.delay, self.function)
+
+	def start(self):
+		''' if not running, start timer '''
+		if not self.running:
+			self.__set()
+			self.timer.start()
+			self.running = True
+
+	def cancel(self):
+		''' if running, cancel timer '''
+		if self.running:
+			self.timer.cancel()
+			self.running = False
+
+	def reset(self):
+		''' reset timer '''
+		self.cancel()
+		self.start()
+
+class FileHandler():
+	''' handle getting/putting/cleaning of local and remote hosts files '''
+
+	def __init__(self, temp_file, **kwargs):
 		self.params = SimpleNamespace(**kwargs)
-
 		self.logger = get_logger(self.__class__.__name__, self.params.log_level)
-
-		self.make_temp_file()
-
+		self.temp_file = temp_file
 		self.ssh = SSHClient()
 		self.ssh.set_missing_host_key_policy(AutoAddPolicy())
+		self.delayed_put = ResettableTimer(self.params.delay, self.put_hostfile)
+		self.key = False
 
 		self.get_server_ip()
 
 		if self.params.key != '':
 			self.logger.debug('self.params.key: %s', self.params.key)
-			self.key = False
 			self.verify_key()
 
-		self.get_clean_hosts()
-
-	def make_temp_file(self):
-		''' make the local temp file '''
-
-		backup_temp_file = '/tmp/dnsmasq-updater.temp'
-
-		if not path.exists(path.dirname(self.params.temp_file)):
-			try:
-				makedirs(path.dirname(self.params.temp_file))
-			except OSError as err:
-				if err.errno != errno.EEXIST:
-					self.logger.notice(
-						'Cannot create folder for specified temporary file (\'%s\'), ' \
-						'defaulting to \'%s\'', self.params.temp_file, backup_temp_file)
-					self.params.temp_file = backup_temp_file
+		self.get_hostfile()
 
 	def get_server_ip(self):
 		'''
@@ -112,7 +130,8 @@ class RemoteHandler():
 		unwise to attempt a DNS resolution when we've just shut down the DNS server
 		'''
 		try:
-			self.params.server_ip = ipaddress.ip_address(self.params.server)
+			ipaddress.ip_address(self.params.server)
+			self.params.server_ip = self.params.server
 		except ValueError:
 			try:
 				self.params.server_ip = socket.getaddrinfo(self.params.server, None)[0][4][0]
@@ -207,16 +226,24 @@ class RemoteHandler():
 		else:
 			remote_hosts = exec_return.readlines()
 
-		with open(self.params.temp_file, 'w') as file:
-			for line in remote_hosts:
-				file.write(line)
+		self.hosts = remote_hosts
+
+	def queue_put(self):
+		'''
+		delayed putting of the local hosts file on the remote device
+		the delay allows for any additional changes in the immediate future,
+		such as expected when a container is restarting, for example.
+		'''
+
+		self.logger.info('Queued remote host file update.')
+		self.delayed_put.reset()
 
 	def put_hostfile(self):
 		''' put the local hosts file on the remote device '''
 		self.open_ssh()
 		self.logger.info('Writing remote hosts file: %s', self.params.file)
 
-		with open(self.params.temp_file, 'r') as temp_file:
+		with open(self.temp_file.name, 'r') as temp_file:
 			exec_return = self.ssh.exec_command(
 				'echo -e "' + temp_file.read() + '" > ' + self.params.file)[1]
 			if exec_return.channel.recv_exit_status():
@@ -225,168 +252,168 @@ class RemoteHandler():
 		self.exec_remote_command()
 		self.close_ssh()
 
-	def get_clean_hosts(self):
-		''' get hosts file from remote device and remove existing dnsmasq_update entries '''
-
-		self.get_hostfile()
-
-		hosts_clean = []
-
-		with open(self.params.temp_file, 'r+') as file:
-			for line in file:
-				if self.block_start in line:
-					break
-				hosts_clean.append(line.rstrip('\r\n'))
-
-		try:
-			while hosts_clean[0] == '':
-				hosts_clean.pop(0)
-		except IndexError:
-			pass
-
-		try:
-			while hosts_clean[-1] == '':
-				hosts_clean.pop(-1)
-		except IndexError:
-			pass
-
-		hosts_clean.append('')
-		self.logger.debug('hosts_clean:\n%s', json.dumps(hosts_clean, indent=4))
-
-		with open(self.params.temp_file, 'w+') as file:
-			for line in hosts_clean:
-				file.write(line + '\n')
-
 	def exec_remote_command(self):
 		''' execute command to update dnsmasq on remote device '''
 
 		self.open_ssh()
 		remote_cmd = self.params.remote_cmd.strip('\'"')
 
-		self.logger.debug('remote_cmd: %s', remote_cmd)
 		try:
 			exec_return = self.ssh.exec_command(remote_cmd)[1]
 		except SSHException:
 			self.logger.error('SSHException: Failed to execute remote command: %s', remote_cmd)
 
-		if exec_return.channel.recv_exit_status():
+		if exec_return.channel.recv_exit_status() > 0:
 			self.logger.error('Could not execute remote command: %s', remote_cmd)
 		else:
-			self.logger.info('Restarted dnsmasq on remote device.')
+			self.logger.info('Executed remote command: %s', remote_cmd)
 
 
 class HostsHandler():
-	''' Handle the Hosts object and the individual HostEntry objects '''
+	''' handle the Hosts object and the individual HostEntry objects '''
 
-	def __init__(self, remote_handler, **kwargs):
+	block_start = '### dnsmasq updater start ###'
+
+	def __init__(self, file_handler, **kwargs):
 		self.params = SimpleNamespace(**kwargs)
-
 		self.logger = get_logger(self.__class__.__name__, self.params.log_level)
+		self.file_handler = file_handler
+		self.temp_file = file_handler.temp_file
+		self.delayed_write = ResettableTimer(self.params.local_write_delay, self.write_hosts)
 
-		self.remote_handler = remote_handler
-		self.block_start = self.remote_handler.block_start
+		self.get_remote_hosts()
 
-		self.hosts = Hosts(path=self.params.temp_file)
-		if not self.hosts.exists(comment=self.block_start):
-			comment = HostsEntry(entry_type='comment', comment=self.block_start)
-			self.hosts.add([comment], force=True, allow_address_duplication=True)
+	def get_remote_hosts(self):
+		''' parse remote hosts file into python-hosts '''
+
+		self.hosts = Hosts(path='/dev/null')
+
+		self.logger.debug('Cleaning remote hosts..')
+
+		for line in self.file_handler.hosts:
+			if self.block_start in line:
+				break
+
+			line_type = HostsEntry.get_entry_type(line)
+
+			if line_type in ['ipv4', 'ipv6']:
+				self.hosts.add([HostsEntry.str_to_hostentry(line)])
+			elif line_type == 'comment':
+				self.hosts.add([HostsEntry(entry_type='comment', comment=line)])
+			elif line_type == 'blank':
+				# python_hosts.Hosts.add doesn't seem to work for blank lines.
+				# We'll have to use the internal class methods directly.
+				self.hosts.entries.append(HostsEntry(entry_type="blank"))
+			else:
+				self.logger.warning('Unknown line type in hosts file: %s', line)
+
+		self.hosts.add([HostsEntry(entry_type='comment', comment=self.block_start)])
+
+		if self.params.log_level == logging.DEBUG:
+			self.logger.debug('Cleaned remote hosts:')
+			for entry in self.hosts.entries:
+				print('    ', entry)
 
 	def parse_hostnames(self, hostnames):
-		''' return a list of hostnames with and without the zone attached on each '''
+		'''
+		return dictionary items containing IPs and a list of hostnames
 
-		parsed_hostnames = []
+		dict_items([
+			('<IP_1>', ['<hostname1>', '<hostname2>', etc..]),
+			('<IP_2>', ['<hostname3>', '<hostname4>', etc..]),
+			etc..])
+		'''
+
+		hostname_dict = defaultdict(set)
 
 		for hostname in hostnames:
+			host_ip = self.params.ip
+
+			if ':' in hostname:
+				hostname, host_ip = hostname.split(':', 1)
+
 			try:
 				hostname = hostname[0:hostname.index('.' + self.params.domain)]
 			except ValueError:
 				pass
 
-			zoned_name = hostname + '.' + self.params.domain
-			if (zoned_name) not in parsed_hostnames:
-				parsed_hostnames.append(zoned_name)
+			if not self.hosts.exists(names=[hostname]):
+				hostname_dict[host_ip].update([hostname, hostname + '.' + self.params.domain])
 
-			if hostname not in parsed_hostnames:
-				parsed_hostnames.append(hostname)
+		return dict([key, sorted(value)] for key, value in hostname_dict.items())
 
-		return parsed_hostnames
-
-	def add_host(self, hostnames, do_write=False):
+	def add_hosts(self, hostnames, do_write=True):
 		''' create HostsEntry for a host and add it to Hosts object, optionally write out '''
 
-		valid_hostnames = False
-
 		parsed_hostnames = self.parse_hostnames(hostnames)
-		for hostname in parsed_hostnames:
-			if not self.hosts.exists(names=[hostname]):
-				valid_hostnames = True
-				break
+		parsed_items = parsed_hostnames.items()
 
-		if valid_hostnames:
-			hostentry = HostsEntry(entry_type='ipv4', address=self.params.ip, names=parsed_hostnames)
-			self.hosts.add([hostentry], force=True, allow_address_duplication=True)
-
-			self.logger.info('Added host: %s', parsed_hostnames)
+		if parsed_items:
+			for host_ip, names in parsed_items:
+				self.logger.debug('Adding: (%s) %s', host_ip, names)
+				hostentry = HostsEntry(entry_type='ipv4', address=host_ip, names=names)
+				self.hosts.add([hostentry], force=True, allow_address_duplication=True)
 
 			if do_write:
-				self.write_hosts()
+				self.queue_write()
+
+			self.logger.info('Added host(s): %s', sum(parsed_hostnames.values(), []))
 		else:
 			self.logger.info('Host already exists, nothing to add.')
 
-		return valid_hostnames
+		return parsed_items
 
-	def del_host(self, hostnames, do_write=False):
-		''' delete a host's names, optionally write out '''
+	def del_hosts(self, hostnames):
+		''' delete hostnames, optionally write out '''
 
-		valid_hostnames = False
-
-		self.logger.debug('del_host: %s', hostnames)
+		self.logger.debug('Deleting hostnames: %s', hostnames)
 		for hostname in hostnames:
-			if self.hosts.exists(names=[hostname]):
-				self.hosts.remove_all_matching(name=hostname)
-				self.logger.info('Deleted hosts: %s', hostnames)
-				valid_hostnames = True
-				break
+			try:
+				hostname = hostname[0:hostname.index(':')]
+			except ValueError:
+				pass
 
-		if valid_hostnames:
-			if do_write:
-				self.write_hosts()
-		else:
-			self.logger.info('Host doesn\'t exist, nothing to delete.')
+			self.hosts.remove_all_matching(name=hostname)
+
+		self.queue_write()
+
+	def queue_write(self):
+		'''
+		delayed writing of the local and remote hosts files
+		the delay allows for any additional changes in the immediate future,
+		such as expected when a container is restarting, for example.
+		'''
+
+		self.delayed_write.reset()
 
 	def write_hosts(self):
 		''' write local hosts file, put it on the remote device '''
 
 		if self.params.log_level == logging.DEBUG:
-			self.logger.debug('Hosts entries:')
+			self.logger.debug('Writing local hosts temp file: %s', self.temp_file.name)
 			for entry in self.hosts.entries:
 				print('    ', entry)
 
-		self.logger.debug('Writing local hosts file: %s', self.params.temp_file)
-
-		self.hosts.write(path=self.params.temp_file)
-		self.remote_handler.put_hostfile()
+		self.hosts.write(path=self.temp_file.name)
+		self.temp_file.seek(0)
+		self.file_handler.queue_put()
 
 
 class DockerHandler():
-	''' Handle connecting to the Docker socket and the data it produces '''
+	''' handle connecting to the Docker socket and the data it produces '''
 
 	client = None
 
-	def __init__(self, hosts_updater, **kwargs):
+	def __init__(self, hosts_handler, **kwargs):
 		self.params = SimpleNamespace(**kwargs)
-
 		self.logger = get_logger(self.__class__.__name__, self.params.log_level)
-
-		self.hosts_updater = hosts_updater
-		self.hostnames = []
-
+		self.hosts_handler = hosts_handler
 		self.scan_success = False
 
-		if self.params.ready_fd:
-			self.ready_fd = int(self.params.ready_fd)
-		else:
+		if self.params.ready_fd == '':
 			self.ready_fd = False
+		else:
+			self.ready_fd = int(self.params.ready_fd)
 
 	def get_client(self):
 		''' create the Docker client object '''
@@ -401,7 +428,7 @@ class DockerHandler():
 		else:
 			self.logger.info('Connected to Docker socket.')
 
-	def get_hostnames(self, container):
+	def get_hostnames(self, container, get_extra_hosts=True):
 		''' return a list of hostnames for a container '''
 
 		hostnames = [container.attrs['Config']['Hostname']]
@@ -413,15 +440,16 @@ class DockerHandler():
 			pass
 
 		for key, value in labels.items():
-			if key.startswith('traefik.http.routers.') and value.startswith('Host'):
-				hostnames.append(value[value.index('(`')+len('(`'):value.index('`)')])
+			if key.startswith('traefik.http.routers.'):
+				pattern = re.compile(r'Host\(`([^`]*)`\)')
 
-		extra_hosts = container.attrs['HostConfig']['ExtraHosts']
-		if extra_hosts:
-			hostnames.append(extra_hosts)
-		else:
-			extra_hosts = 'none'
-		self.logger.debug('%s extra_hosts: %s', container.name, extra_hosts)
+				for match in pattern.finditer(value):
+					hostnames.append(match.group(1))
+
+		if get_extra_hosts:
+			extra_hosts = container.attrs['HostConfig']['ExtraHosts']
+			if extra_hosts:
+				hostnames = hostnames + extra_hosts
 
 		return hostnames
 
@@ -431,12 +459,14 @@ class DockerHandler():
 		self.logger.info('Started scanning running containers.')
 
 		containers = self.client.containers.list(
-			filters={"label":"dnsmasq.updater.enable=true", "status":"running"})
+			filters={"label":"dnsmasq.updater.enable", "status":"running"})
 
 		for container in containers:
+			if container.labels['dnsmasq.updater.enable'].lower() not in ['true', 'yes', 'on', '1']:
+				continue
 			names = self.get_hostnames(container)
 			self.logger.info('Found %s: %s', container.name, names)
-			if self.hosts_updater.add_host(names, do_write=False):
+			if self.hosts_handler.add_hosts(names, do_write=False):
 				self.scan_success = True
 
 		self.logger.info('Finished scanning running containers.')
@@ -455,7 +485,7 @@ class DockerHandler():
 		for container in network.containers:
 			names = self.get_hostnames(container)
 			self.logger.info('Found %s: %s', container.name, names)
-			if self.hosts_updater.add_host(names, do_write=False):
+			if self.hosts_handler.add_hosts(names, do_write=False):
 				self.scan_success = True
 
 		self.logger.info('Finished scanning containers on \'%s\' network.', self.params.network)
@@ -478,9 +508,9 @@ class DockerHandler():
 			names = self.get_hostnames(container)
 
 			if event['status'] == 'start':
-				self.hosts_updater.add_host(names, do_write=True)
+				self.hosts_handler.add_hosts(names)
 			elif event['status'] == 'stop':
-				self.hosts_updater.del_host(names, do_write=True)
+				self.hosts_handler.del_hosts(names)
 
 		# trigger on network connect/disconnect
 		elif (event['Type'] == 'network') and \
@@ -506,30 +536,34 @@ class DockerHandler():
 
 				names = self.get_hostnames(container)
 
+				self.logger.debug('Names: %s', names)
+
 				if event['Action'] == 'connect':
-					self.hosts_updater.add_host(names, do_write=True)
+					self.hosts_handler.add_hosts(names)
 				elif event['Action'] == 'disconnect':
-					self.hosts_updater.del_host(names, do_write=True)
+					self.hosts_handler.del_hosts(names)
 
 	def run(self):
 		''' connect to Docker socket, process existing containers then monitor events '''
 
 		self.get_client()
-
 		self.scan_runnning_containers()
 
 		if self.params.network:
 			self.scan_network_containers()
 
 		if self.scan_success:
-			self.hosts_updater.write_hosts()
+			self.hosts_handler.queue_write()
 
 		if self.ready_fd:
 			self.logger.info('Initialization done. Signalling readiness.')
 			self.logger.debug('Readiness signal writing to file descriptor %s.', self.ready_fd)
-			write(self.ready_fd, '\n'.encode())
+			try:
+				os.write(self.ready_fd, '\n'.encode())
+			except OSError:
+				self.logger.warning('Could not signal file descriptor \'%s\'.', self.ready_fd)
 		else:
-			self.logger.debug('Ready but signalling disabled.')
+			self.logger.info('Initialization done.')
 
 		events = self.client.events(decode=True)
 
@@ -557,9 +591,10 @@ class ConfigHandler():
 			'key':'',
 			'file':'',
 			'remote_cmd':'',
-			'temp_file':'/run/dnsmasq-updater/hosts.temp',
 			'log_level':self.log_level,
-			'ready_fd':False
+			'delay':10,
+			'local_write_delay':3,
+			'ready_fd':''
 		}
 
 		self.args = []
@@ -600,9 +635,9 @@ class ConfigHandler():
 		# find external configuration if none is specified
 		if self.args.config_file is None:
 			for config_path in CONFIG_PATHS:
-				config_file = path.join(config_path, CONFIG_FILE)
+				config_file = os.path.join(config_path, CONFIG_FILE)
 				self.logger.debug('Looking for config file: %s', config_file)
-				if path.isfile(config_file):
+				if os.path.isfile(config_file):
 					self.logger.info('Found config file: %s', config_file)
 					self.args.config_file = config_file
 					break
@@ -612,7 +647,7 @@ class ConfigHandler():
 
 		# read external configuration if specified and found
 		if self.args.config_file is not None:
-			if path.isfile(self.args.config_file):
+			if os.path.isfile(self.args.config_file):
 				config = configparser.ConfigParser()
 				config.read(self.args.config_file)
 				self.defaults.update(dict(config.items("dns")))
@@ -664,13 +699,14 @@ class ConfigHandler():
 			'-r', '--remote_cmd', action='store', metavar='COMMAND',
 			help='the update command to execute on the dnsmasq server')
 		parser.add_argument(
-			'-t', '--temp_file', action='store', metavar='FILE',
-			help='the local file (including path) for temporary hosts file ' \
-			'(default \'%(default)s\')')
+			'-t', '--delay', action='store', metavar='SECONDS', type=int,
+			help='delay for writes to the dnsmasq server (default \'%(default)s\')')
+		parser.add_argument(
+			'--local_write_delay', action='store', type=int, help=argparse.SUPPRESS)
 		parser.add_argument(
 			'--ready_fd', action='store', metavar='INT',
-			help='set to an integer file descriptor to enable signalling readiness ' \
-			'by writing a new line to that file descriptor (default \'%(default)s\')')
+			help='set to an integer to enable signalling readiness by writing a new' \
+			'line to that integer file descriptor')
 		self.args = parser.parse_args()
 
 		self.logger.debug('Parsed command line:\n%s', json.dumps(vars(self.args), indent=4))
@@ -687,7 +723,7 @@ class ConfigHandler():
 				self.logger.error('No password or key specified.')
 				sys.exit(1)
 		else:
-			if not path.exists(self.args.key):
+			if not os.path.exists(self.args.key):
 				self.logger.error('Key file (%s) does not exist.', self.args.key)
 				sys.exit(1)
 
@@ -711,7 +747,13 @@ class ConfigHandler():
 
 		if self.args.remote_cmd == '':
 			self.logger.error('No remote command specified.')
+			self.logger.error(self.args.remote_cmd)
 			sys.exit(1)
+
+		if not isinstance(self.args.delay, int):
+			self.logger.error('Specified delay (%s) is invalid.', self.args.delay)
+			sys.exit(1)
+
 
 	def get_args(self):
 		''' return all config parameters '''
@@ -724,10 +766,21 @@ def main():
 
 	config = ConfigHandler()
 	args = config.get_args()
-	remote_handler = RemoteHandler(**vars(args))
-	hosts_updater = HostsHandler(remote_handler, **vars(args))
-	docker_handler = DockerHandler(hosts_updater, **vars(args))
-	docker_handler.run()
+
+	temp_file = tempfile.NamedTemporaryFile(delete=False)
+
+	file_handler = FileHandler(temp_file, **vars(args))
+	hosts_handler = HostsHandler(file_handler, **vars(args))
+	docker_handler = DockerHandler(hosts_handler, **vars(args))
+
+	try:
+		docker_handler.run()
+	except SystemExit:
+		pass
+	finally:
+		hosts_handler.delayed_write.cancel()
+		file_handler.delayed_put.cancel()
+		os.remove(temp_file.name)
 
 if __name__ == '__main__':
 	main()
