@@ -1,0 +1,59 @@
+ARG ALPINE_VERSION="3.13.2"
+ARG PYTHON_VERSION="3.8"
+ARG APP_PATH="/app"
+ARG TARGET_OS="alpine"
+
+ARG FROM_IMAGE="moonbuggy2000/alpine-s6:${ALPINE_VERSION}"
+
+ARG TARGET_ARCH_TAG="amd64"
+
+## build the binary and prepare files
+#
+FROM "moonbuggy2000/nuitka:${PYTHON_VERSION}-${TARGET_OS}-${TARGET_ARCH_TAG}" AS builder
+
+ARG APP_PATH
+WORKDIR "${APP_PATH}"
+
+ENV LIBSODIUM_MAKE_ARGS="-j4"
+
+COPY ./requirements.txt ./
+
+RUN RUST_VERSION="$(rustc --version | cut -d' ' -f2)" \
+	&& RUST_REQUIRED="1.41.1" \
+	&& if [ "$(printf '%s\n' "${RUST_REQUIRED}" "${RUST_VERSION}" | sort -V | head -n1)" != "${RUST_REQUIRED}" ]; then \
+		echo "*** CRYPTOGRAPHY_DONT_BUILD_RUST"; export "CRYPTOGRAPHY_DONT_BUILD_RUST=1"; fi \
+	&& python3 -m pip install --no-cache-dir -r requirements.txt
+
+COPY ./dnsmasq_updater.py ./
+COPY ./dnsmasq_updater-nuitka-hints.json ./
+
+#RUN python3 -m nuitka --follow-imports --standalone dnsmasq_updater.py
+#RUN python3 -m nuitka --standalone dnsmasq_updater.py
+
+ARG PYTHON_VERSION
+RUN svn checkout https://github.com/Nuitka/NUITKA-Utilities/trunk/hinted-compilation . \
+	&& cp ./dnsmasq_updater-nuitka-hints.json "./dnsmasq_updater-${PYTHON_VERSION//.}-linux-64.json" \
+	&& python3 nuitka-hints.py dnsmasq_updater.py
+
+RUN mkdir ./dnsmasq_updater.dist/keys \
+	&& mkdir ./dnsmasq_updater.dist/conf \
+	&& mkdir ./root \
+	&& cp -r ./dnsmasq_updater.dist "./root/${APP_PATH}"
+
+COPY ./dnsmasq_updater.conf "./root/${APP_PATH}/conf/"
+COPY ./docker/root/ ./root/
+
+RUN echo "APP_PATH=${APP_PATH}" >> ./root/etc/contenv_extra
+
+## build the final image
+#
+FROM "${FROM_IMAGE}"
+
+ARG APP_PATH
+WORKDIR "${APP_PATH}"
+
+COPY --from=builder "${APP_PATH}/root/" /
+
+ENTRYPOINT ["/init"]
+
+HEALTHCHECK --start-period=10s --timeout=10s CMD /healthcheck.sh

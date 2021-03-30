@@ -1,6 +1,6 @@
 #!/usr/bin/with-contenv /bin/sh
 
-CONFIG_FILE=${APP_PATH}/conf/dnsmasq_updater.conf
+CONFIG_FILE="${APP_PATH}/conf/dnsmasq_updater.conf"
 
 if $(env | grep -q DMU_); then
 	[ ! -z "${DMU_IP}" ] && sed -i "s!^ip.*!ip=${DMU_IP}!" $CONFIG_FILE

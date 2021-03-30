@@ -1,0 +1,123 @@
+#! /usr/bin/env bash
+
+. hooks/env
+
+echo '--- post_checkout ---'
+
+[ ! -d "${DATA_DIR}" ] && mkdir -p "${DATA_DIR}"
+
+cat "${ARCH_YAML}" > "${CONFIG_YAML}"
+
+## parse arch config
+#
+while read -r line; do declare "${line}"; done < <(parse_yaml "${ARCH_YAML}")
+
+## parse Docker environment variables
+#
+case "${DOCKER_TAG##*-}" in
+	i386|amd64|armv*|arm64*|ppc64*|s390x)
+		TARGET_TAG="${DOCKER_TAG%-*}"
+		add_param "${DOCKER_TAG##*-}" 'BUILD_ARCH'
+		;;
+	*)
+		[ -z "${TARGET_TAG+set}" ] && \
+			TARGET_TAG="${DOCKER_TAG}"
+		;;
+esac
+
+## parse 'latest' tag
+if [ "${TARGET_TAG}" = 'latest' ]; then
+	[ -z "${SOURCE_LATEST}" ] && \
+		echo "Getting latest source tag.." && \
+		SOURCE_LATEST="$(docker_api_latest "${SOURCE_REPO}")"
+
+	[ -n "${SOURCE_LATEST}" ] && \
+		add_param "${SOURCE_LATEST}" 'SOURCE_LATEST' && \
+		TARGET_TAG="${SOURCE_LATEST}"
+fi
+
+##	get TARGET_TAG from get_target_tag, if set in build.conf
+ifFuncSetVar TARGET_TAG get_target_tag
+
+##	get SOURCE_TAG from get_source_tag, if set in build.conf
+ifFuncSetVar SOURCE_TAG get_source_tag || SOURCE_TAG="${TARGET_TAG}"
+add_param "${SOURCE_TAG}" 'SOURCE_TAG'
+
+SOURCE_IMAGE="${SOURCE_REPO}:${SOURCE_TAG}"
+SOURCE_MANIFEST="${DATA_DIR}/manifest.${SOURCE_TAG}"
+
+## get source manifest
+#
+if [ ! -s "${SOURCE_MANIFEST}" ] || [ "$(( $(date +"%s") - $(date -r "${SOURCE_MANIFEST}" +"%s") ))" -gt "${CACHE_EXPIRY}" ]; then
+	manifest_cmd=("$(get_manifest_tool)" inspect "${SOURCE_IMAGE}")
+
+	echo 'Fetching source manifest..'
+
+#	pretty_manifest_cmd="$(echo "${manifest_cmd[*]}" | sed -r -e "s/(--)/\\\ \n\t\1/g")"
+#	printf '\n--- manifest command ---\n%s\n' "${pretty_manifest_cmd}"
+
+	manifest_data="$("${manifest_cmd[@]}" 2> /dev/null)"
+	[ -z "${manifest_data}" ] \
+		&& { printf '\nCould not find manifest for source image: %s\nExiting.\n' "${SOURCE_IMAGE}"; exit 1; }
+
+	echo "${manifest_data}" > "${SOURCE_MANIFEST}";
+else
+	echo "Using cached manifest."
+fi
+echo
+
+print_param "${DOCKER_TAG}" 'Docker tag'
+add_print_param "${TARGET_TAG}" 'TARGET_TAG' 'Target tag'
+
+## determine the arches to build
+#
+if [ -n "${BUILD_ARCH+set}" ]; then
+	build_arches="${BUILD_ARCH}"
+else
+	configured_arches="$(sed -En 's/(^\w*):\s*$/\1/p' "${ARCH_YAML}" | sort -u | xargs)"
+	print_param "${configured_arches}" 'Configured arches'
+
+	if [ -n "${EXCLUDED_ARCHES+set}" ]; then
+		print_param "${EXCLUDED_ARCHES}" 'Excluded arches'
+		for excluded in ${EXCLUDED_ARCHES}; do
+			configured_arches="$(echo ${configured_arches//${excluded}/} | sort -u | xargs)"
+		done
+	fi
+
+	source_arches="$(sed -n -e 'N;s/.*Arch:\s*\(\w*\)\n.*Variant:\s*\(\w*\)/\1\2/p;D;' "${SOURCE_MANIFEST}" \
+		| sed -e 's/[^\w]*386/i386/' | sort -u | xargs)"
+
+	# default arch if manifest-tool doesn't return anything useful
+	[ -z "${source_arches}" ] && source_arches='amd64'
+
+	print_param "${source_arches}" 'Source arches'
+
+	build_arches="$(comm -12 \
+		<(printf '%s\n' ${configured_arches} | LC_ALL=C sort) \
+		<(printf '%s\n' ${source_arches} | LC_ALL=C sort) | xargs)"
+fi
+add_print_param "${build_arches}" 'build_arches' 'Build arches'
+
+platforms=''
+for arch in ${build_arches}; do
+	platform_string="${arch}_PLATFORM"
+  platforms="${platforms},${!platform_string}"
+done
+add_print_param "${platforms:1}" 'platforms' 'Platforms'
+
+add_print_param "${SOURCE_IMAGE}" 'SOURCE_IMAGE' 'Source image'
+
+arch_yaml_keys="$(sed -En 's|^[[:space:]][[:space:]](.*):.*|\1|p' ${ARCH_YAML} | sort -u | xargs)"
+available_keys="$(comm -12 <(printf '%s\n' ${arch_yaml_keys} \
+	| LC_ALL=C sort) <(printf '%s\n' ${ARCH_KEYS} | LC_ALL=C sort) | xargs)"
+add_param "${available_keys}" 'available_keys'
+
+##	call any post_checkout_end() from build.conf
+#
+ifFunc post_checkout_end && post_checkout_end
+
+for param in "${!CHECKOUT_DISPLAY[@]}"; do
+	[ -n "${!param}" ] && print_param "${!param}" "${CHECKOUT_DISPLAY[${param}]}"
+done
+
+echo

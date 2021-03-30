@@ -2,4 +2,13 @@
 .dockerignore
 *.md
 Dockerfile*
-hooks/
+hooks
+build.conf
+.build_data
+arch.yaml
+build.sh
+__pycache__
+dnsmasq_updater.dist
+*.log
+*rsa*
+*.bak*

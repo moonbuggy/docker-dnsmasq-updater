@@ -1,0 +1,6 @@
+.build_data/
+__pycache__/
+*.log
+*.bak
+test.conf
+*rsa*

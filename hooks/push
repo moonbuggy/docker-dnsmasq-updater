@@ -1,0 +1,44 @@
+#! /usr/bin/env bash
+
+. hooks/env
+
+echo '--- push ---'
+
+base_tags=()
+
+ifFunc get_base_tags && IFS=' ' read -r -a base_tags <<< "$(get_base_tags)"
+
+base_tags+=("${TARGET_TAG}")
+
+IFS=' ' read -r -a base_tags <<< "$(echo "${base_tags[*]}" | xargs -n1 | sort -u | xargs)"
+print_param "${base_tags[*]}" "Base tags"
+echo
+
+for arch in ${build_arches}; do
+#	echo "--- push (${arch}) ---"
+
+	TARGET_ARCH_TAG="${arch}_TARGET_ARCH_TAG"
+	EXTRA_ARCH_TAGS="${arch}_EXTRA_ARCH_TAGS"
+
+	arch_tags=(${!TARGET_ARCH_TAG})
+	[ -n "${!EXTRA_ARCH_TAGS}" ] && arch_tags+=(${!EXTRA_ARCH_TAGS})
+
+	echo "--- push (${arch_tags[*]}) ---"
+
+	base_image="${DOCKER_REPO}:${TARGET_TAG}-${!TARGET_ARCH_TAG}"
+
+	for tag in "${base_tags[@]}"; do
+		for arch_tag in "${arch_tags[@]}"; do
+			target_tag="${tag}-${arch_tag}"
+			target_image="${DOCKER_REPO}:${target_tag}"
+
+			[[ -n "${NOOP+set}" || -n "${NOPUSH+set}" ]] && { printf '%-20s [NOOP]\n' "${target_tag}: "; } && continue
+
+			[ "${target_image}" != "${base_image}" ] && docker tag "${base_image}" "${target_image}"
+			docker push "${target_image}" | grep digest
+			# in theory should return an error code here, but a significant problem will be
+			# caught in post_push, so meh.
+		done
+	done
+	echo
+done

@@ -22,10 +22,11 @@ from threading import Timer
 from types import SimpleNamespace
 from collections import defaultdict
 
-import docker
+
 from python_hosts import Hosts, HostsEntry
-from paramiko import SSHClient, AutoAddPolicy, RSAKey, DSSKey
+from paramiko.client import SSHClient, AutoAddPolicy, RSAKey, DSSKey
 from paramiko.ssh_exception import SSHException, AuthenticationException, PasswordRequiredException
+import docker
 
 ## list possible configuration file locations in the order they should
 ## be tried, use first match
@@ -428,7 +429,8 @@ class DockerHandler():
 		else:
 			self.logger.info('Connected to Docker socket.')
 
-	def get_hostnames(self, container, get_extra_hosts=True):
+	@classmethod
+	def get_hostnames(cls, container, get_extra_hosts=True):
 		''' return a list of hostnames for a container '''
 
 		hostnames = [container.attrs['Config']['Hostname']]

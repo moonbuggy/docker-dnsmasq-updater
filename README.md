@@ -13,8 +13,8 @@ This script has been built with an AsusWRT/Entware router in mind, but should wo
 
 - Runs on the Docker host OR in a container
 - On load, scans all running containers for a `dnsmasq.updater.enable` label
-- Optionally, on load, scans a specified network for running containers
-- After loading, monitors the Docker socket for containers starting/stopping and optionally connecting/disconnecting to a specified network
+- Optionally, on load, scans a specified Docker network for running containers
+- After loading, monitors the Docker socket for containers starting/stopping and optionally connecting/disconnecting to a specified Docker network
 - Finds any hostnames for containers meeting criteria
 - Updates a remote hosts file
 - Restarts a remote dnsmasq server
@@ -73,7 +73,7 @@ There's a hidden `--local_write_delay` argument, similar to `--delay`, which med
 
 ## Setup
 
-Docker Dnsmasq Updater requires at least Python 3.4 and the docker, paramiko and python_hosts modules.
+Docker Dnsmasq Updater requires at least Python 3.6 and the docker, paramiko and python_hosts modules.
 
 The script can be run standalone on the Docker host or in a Docker container, so long as it has access to the Docker socket it's happy.
 
@@ -100,6 +100,10 @@ If you're using a config file instead of environment variables (see below) you'l
 To minimize the Docker image size, and to theoretically improve run times (I haven't benchmarked it because I believe it runs fast enough either way), the default build is binary, tagged as `latest` and `binary`.
 
 A build using the uncompiled Python script is available, tagged `script`.
+
+#### Architectures
+
+The main `latest`, `binary` and `script` tags should automatically provide images compatible with `amd64`, `arm`, `armhf`, `arm64`, `386` and `ppc64le` platforms. Tags for specific single-arch images are available, in the form `alpine-<arch>` and `alpine-binary-<arch>` for the `script` and `binary` builds respectively.
 
 #### Docker environment variables
 
@@ -165,6 +169,20 @@ Docker Dnsmasq Updater will pull Traefik hostnames set on containers via the ``t
 As all containers joining a monitored network are considered valid, if you monitor a user-defined network that Traefik uses you don't need to set any `dnsmasq.updater.*` labels at all, it gets what it needs from the network and Traefik labels.
 
 This scenario provides the easiest/laziest configuration route, with no Docker Dnsmasq Updater specific cofiguration required on containers.
+
+## Known Issues
+
+The container may fail to start on some ARM devices with this error:
+
+```
+Fatal Python error: pyinit_main: can't initialize time
+Python runtime state: core initialized
+PermissionError: [Errno 1] Operation not permitted
+```
+
+This is caused by [a bug in libseccomp](https://github.com/moby/moby/issues/40734) and can be resolved by either updating libseccomp on the Docker host (to at least 2.4.x) or running the container with `--security-opt seccomp=unconfined` set in the `docker run` command.
+
+On a Debian-based host (e.g. Armbian) it may be necessary to add the backports repo for apt to find the newest version.
 
 ## Links
 

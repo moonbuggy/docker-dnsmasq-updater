@@ -1,0 +1,62 @@
+#! /usr/bin/env bash
+
+. hooks/env
+
+echo "--- build ---"
+
+## loop through valid arches
+#
+for arch in ${build_arches}; do
+	echo "--- build (${arch}) ---"
+
+	# get arch config
+	for key in ${available_keys}; do
+		var="${arch}_${key}"
+		declare "${key}=${!var}"
+	done
+
+	if [ -n "${SOURCE_ARCH_PREFIX}" ]; then
+		[ -n "${QEMU_ARCH}" ] \
+			&& FROM_IMAGE="${QEMU_PREFIX}/${SOURCE_IMAGE}" \
+			|| FROM_IMAGE="${SOURCE_IMAGE}"
+	else
+		ifFuncSetVar FROM_IMAGE get_from_image \
+			|| FROM_IMAGE="${SOURCE_IMAGE}-${TARGET_ARCH_TAG}"
+	fi
+
+	print_param "${FROM_IMAGE}" 'From'
+	print_param "${TARGET_TAG}" 'Target tag'
+	print_param "${QEMU_ARCH}" 'QEMU arch'
+
+	if [ -n "${DOCKERFILE_OVERRIDE+set}" ]; then
+		DOCKER_FILE="${DOCKERFILE_OVERRIDE}"
+		[ -n "${QEMU_ARCH}" ] && DOCKER_FILE="${DOCKER_FILE}.qemu"
+	fi
+	print_param "${DOCKER_FILE}" 'Dockerfile'
+
+	# prepare the build command
+	arg_string="--build-arg FROM_IMAGE=${FROM_IMAGE}"
+
+	for arg in "${!BUILD_ARGS[@]}"; do
+		if [ -n "${!arg}" ]; then
+			print_param "${!arg}" "${BUILD_ARGS[${arg}]}"
+			arg_string="${arg_string} --build-arg ${arg}=${!arg}"
+		fi
+	done
+
+	[ -n "${QEMU_ARCH}" ] && \
+		arg_string="${arg_string} --build-arg QEMU_ARCH=${QEMU_ARCH}"
+
+	arg_string="${arg_string} -f ${DOCKER_FILE}"
+
+	build_cmd=(docker build ${arg_string} -t "${DOCKER_REPO}:${TARGET_TAG}-${TARGET_ARCH_TAG}" .)
+	pretty_build_cmd=$(echo "${build_cmd[*]}" | sed -r -e "s/(--build-arg |-f |-t )/\\\ \n\t\1/g")
+
+	printf '\n--- build command ---\n%s\n\n' "$pretty_build_cmd"
+
+	[[ -n "${NOOP+set}" || -n "${NOBUILD+set}" ]] && printf '[NOOP]\n\n' && continue
+
+	# build
+	"${build_cmd[@]}"
+	echo
+done
