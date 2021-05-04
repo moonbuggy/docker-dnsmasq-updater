@@ -1,0 +1,80 @@
+ARG ALPINE_VERSION="3.13.2"
+ARG PYTHON_VERSION="3.8"
+ARG APP_PATH="/app"
+ARG BUILDER_ROOT="/builder_root"
+ARG TARGET_OS="alpine"
+ARG RUST_REQUIRED="1.41.1"
+
+ARG FROM_IMAGE="moonbuggy2000/alpine-s6:${ALPINE_VERSION}"
+
+ARG SSL_LIBRARY="openssl"
+ARG PARAMIKO_VERSION="2.7.2"
+ARG PYTHON_HOSTS_VERSION="1.0.1"
+
+ARG TARGET_ARCH_TAG="amd64"
+
+## build the binary and prepare files
+#
+FROM "moonbuggy2000/nuitka:${PYTHON_VERSION}-${TARGET_OS}-${TARGET_ARCH_TAG}" AS builder
+
+# QEMU static binaries from pre_build
+ARG QEMU_DIR
+ARG QEMU_ARCH
+COPY _dummyfile "${QEMU_DIR}/qemu-${QEMU_ARCH}-static*" /usr/bin/
+
+ARG APP_PATH
+WORKDIR "${APP_PATH}"
+
+COPY ./requirements.txt ./
+
+# Python wheels from pre_build
+ARG IMPORTS_DIR=".imports"
+ARG TARGET_ARCH_TAG
+COPY _dummyfile "${IMPORTS_DIR}/${TARGET_ARCH_TAG}*" "/${IMPORTS_DIR}/"
+
+# install requirements
+ARG RUST_REQUIRED
+ENV LIBSODIUM_MAKE_ARGS="-j4"
+RUN RUST_VERSION="$(rustc --version | cut -d' ' -f2)" \
+	&& if [ "${QEMU_ARCH}" = 'arm' ] \
+		|| [ "$(printf '%s\n' "${RUST_REQUIRED}" "${RUST_VERSION}" | sort -V | head -n1)" != "${RUST_REQUIRED}" ]; then \
+			echo "*** CRYPTOGRAPHY_DONT_BUILD_RUST"; export "CRYPTOGRAPHY_DONT_BUILD_RUST=1"; fi \
+	&& python3 -m pip install ${PIP_ARGS} --upgrade pip \
+	&& python3 -m pip install --only-binary=:all: --find-links "/${IMPORTS_DIR}/"  -r requirements.txt \
+	|| python3 -m pip install --find-links "/${IMPORTS_DIR}/" -r requirements.txt
+
+COPY ./dnsmasq_updater.py ./
+COPY ./dnsmasq_updater-nuitka-hints.json ./
+
+# hinted compilation with Nuitka
+ARG PYTHON_VERSION
+RUN svn checkout https://github.com/Nuitka/NUITKA-Utilities/trunk/hinted-compilation . \
+	&& PYTHON_MINOR="$(echo "${PYTHON_VERSION}" | grep -oE '^[0-9]+\.[0-9]+')" \
+	&& ln -s ./dnsmasq_updater-nuitka-hints.json "./dnsmasq_updater-${PYTHON_MINOR//.}-linux-64.json" \
+	&& ln -s ./dnsmasq_updater-nuitka-hints.json "./dnsmasq_updater-${PYTHON_MINOR//.}-linux-32.json"
+
+RUN python3 nuitka-hints.py --output-dir="${BUILDER_ROOT}${APP_PATH}" dnsmasq_updater.py
+
+RUN mkdir ./dnsmasq_updater.dist/keys \
+	&& mkdir ./dnsmasq_updater.dist/conf
+
+# organize files
+ARG BUILDER_ROOT
+RUN mkdir -p "${BUILDER_ROOT}" \
+	&& mv dnsmasq_updater.dist "${BUILDER_ROOT}${APP_PATH}"
+
+WORKDIR "${BUILDER_ROOT}"
+
+COPY ./dnsmasq_updater.conf ".${APP_PATH}/conf/"
+COPY ./root/ ./
+
+RUN echo "APP_PATH=${APP_PATH}" >> "${BUILDER_ROOT}/etc/contenv_extra"
+
+## build the final image
+#
+FROM "${FROM_IMAGE}"
+
+ARG BUILDER_ROOT
+COPY --from=builder "${BUILDER_ROOT}/" /
+
+HEALTHCHECK --start-period=10s --timeout=10s CMD /healthcheck.sh

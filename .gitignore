@@ -1,6 +1,10 @@
-.build_data/
-__pycache__/
+.build_data
+__pycache__
 *.log
 *.bak
 test.conf
 *rsa*
+_dummyfile
+.qemu_static
+.imports
+

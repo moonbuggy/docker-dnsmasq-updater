@@ -12,3 +12,4 @@ dnsmasq_updater.dist
 *.log
 *rsa*
 *.bak*
+test.conf

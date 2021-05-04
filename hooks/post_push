@@ -2,8 +2,6 @@
 
 . hooks/env
 
-[ -n "${BUILD_ARCH+set}" ]	&& echo "Single arch build, not pushing manifests." && exit 0
-
 # push_platforms <target_tag> <base_tag>
 push_platforms () {
 	[ -n "${platforms}" ] || { echo "No platforms to push."; return 0; }
@@ -11,33 +9,52 @@ push_platforms () {
 	local base_tag
 	[ -n "${2}" ] && base_tag="${2}" || base_tag="${1}"
 
+	# allow for empty basetag and ARCHVARIANT-only template
+	[ -n "${base_tag}" ] && base_tag="${base_tag}-"
+
+	local target_tag
+	[ -n "${1}" ] && target_tag="${1}" || target_tag='latest'
+
 	IFS=' ' read -r -a manifest_cmd <<< "$(get_manifest_tool)"
-	manifest_cmd+=(push from-args --platforms "${platforms}" --template "${DOCKER_REPO}:${base_tag}-ARCHVARIANT" --target "${DOCKER_REPO}:${1}")
+	manifest_cmd+=(push from-args --platforms "${platforms}" --template "${DOCKER_REPO}:${base_tag}ARCHVARIANT" --target "${DOCKER_REPO}:${target_tag}")
 
-#	pretty_manifest_cmd="$(echo "${manifest_cmd[*]}" | sed -r -e "s/(--)/\\\ \n\t\1/g")"
-#	echo '--- manifest command ---' && printf '%s\n' "${pretty_manifest_cmd}"
+	# pretty_manifest_cmd="$(echo "${manifest_cmd[*]}" | sed -r -e "s/(--)/\\\ \n\t\1/g")"
+	# echo '--- manifest command ---' && printf '%s\n' "${pretty_manifest_cmd}"
 
-	printf '%-20s ' "${1}:"
+	printf '%-20s ' "${target_tag}"
 
-	[[ -n "${NOOP+set}" || -n "${NOPUSH+set}" ]] && echo '[NOOP]' && return 0
-	"${manifest_cmd[@]}" || { echo "*** Could not push manifest."; return 1; }
+	[ -n "${NOOP+set}" ] && echo '[NOOP]' && return 0
+	[ -n "${NO_PUSH+set}" ] && echo '[NO_PUSH]' && return 0
+#	{ "${manifest_cmd[@]}" | grep -i Digest | cut -d' ' -f2; } || { echo 'Could not push manifest.'; return 1; }
+	"${manifest_cmd[@]}" || { echo 'Could not push manifest.'; return 1; }
 	echo
 }
 
-manifest_tags=()
-
-ifFunc get_manifest_tags && IFS=' ' read -r -a manifest_tags <<< "$(get_manifest_tags)"
-
-manifest_tags+=("${TARGET_TAG}")
-
-[ "${DOCKER_TAG}" = "latest" ] && manifest_tags+=('latest')
-
-IFS=' ' read -r -a manifest_tags <<< "$(echo "${manifest_tags[*]}" | xargs -n1 | sort -u | xargs)"
-
-echo "--- post_push (${manifest_tags[*]}) ---"
-
-if (( ${#manifest_tags[@]} )); then
-	for tag in "${manifest_tags[@]}"; do push_platforms "${tag}" "${TARGET_TAG}";	done
+if [ -n "${SINGLE_ARCH_BUILD}" ]; then
+	echo "Single arch build, not pushing manifests."
+elif [ -n "${NO_MANIFEST+set}" ]; then
+	echo "NO_MANIFEST is set, skipping post_push."
 else
-	echo 'No manifest tags to push.'
+	manifest_tags=()
+
+	ifFunc get_manifest_tags && IFS=' ' read -r -a manifest_tags <<< "$(get_manifest_tags)"
+	manifest_tags+=("${TARGET_TAG}")
+
+	[ "${DOCKER_TAG}" = "latest" ] && manifest_tags+=('latest')
+
+	IFS=' ' read -r -a manifest_tags <<< "$(echo "${manifest_tags[*]}" | xargs -n1 | sort -u | xargs)"
+
+	echo "--- post_push (${manifest_tags[*]}) ---"
+
+	if (( ${#manifest_tags[@]} )); then
+		for tag in "${manifest_tags[@]}"; do push_platforms "${tag}" "${TARGET_TAG}";	done
+	else
+#		echo 'No manifest tags to push.'
+		push_platforms
+	fi
 fi
+echo
+
+##	call any post_push_end() from build.conf
+#
+ifFuncExec post_push_end

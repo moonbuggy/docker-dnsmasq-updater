@@ -4,7 +4,6 @@ arm64v8:
   QEMU_ARCH: aarch64
   S6_ARCH: aarch64
   QEMU_PREFIX: arm64v8
-  DOCKER_FILE: Dockerfile.qemu
   PLATFORM: linux/arm64/v8
 
 amd64:
@@ -12,7 +11,6 @@ amd64:
   QEMU_ARCH:
   S6_ARCH: amd64
   QEMU_PREFIX: amd64
-  DOCKER_FILE: Dockerfile
   PLATFORM: linux/amd64
 
 armv5:
@@ -21,8 +19,17 @@ armv5:
   QEMU_ARCH: arm
   S6_ARCH: arm
   QEMU_PREFIX: arm32v5
-  DOCKER_FILE: Dockerfile.qemu
-  PLATFORM: linux/arm/v5
+  PLATFORM: linux/arm
+  MANIFEST_PLATFORM: linux/arm/v5
+
+arm:
+  TARGET_ARCH_TAG: armv5
+  EXTRA_ARCH_TAGS: arm armel
+  QEMU_ARCH: arm
+  S6_ARCH: arm
+  QEMU_PREFIX: arm32v5
+  PLATFORM: linux/arm
+  MANIFEST_PLATFORM: linux/arm/v5
 
 armv7:
   TARGET_ARCH_TAG: armv7
@@ -30,7 +37,6 @@ armv7:
   QEMU_ARCH: arm
   S6_ARCH: armhf
   QEMU_PREFIX: arm32v7
-  DOCKER_FILE: Dockerfile.qemu
   PLATFORM: linux/arm/v7
 
 i386:
@@ -38,7 +44,6 @@ i386:
   QEMU_ARCH: i386
   S6_ARCH: x86
   QEMU_PREFIX: i386
-  DOCKER_FILE: Dockerfile.qemu
   PLATFORM: linux/386
 
 ppc64le:
@@ -46,5 +51,4 @@ ppc64le:
   QEMU_ARCH: ppc64le
   S6_ARCH: ppc64le
   QEMU_PREFIX: ppc64le
-  DOCKER_FILE: Dockerfile.qemu
   PLATFORM: linux/ppc64le

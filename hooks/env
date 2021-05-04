@@ -1,10 +1,23 @@
 MANIFEST_TOOL_REPO="estesp/manifest-tool"
+MUSL_WHEEL_REPO="moonbuggy2000/python-musl-wheels"
 
-DATA_DIR="./.build_data"
-ARCH_YAML="arch.yaml"
+DATA_DIR='.build_data'
+QEMU_DIR='.qemu_static'
+IMPORTS_DIR='.imports'
+
+ARCH_YAML='arch.yaml'
 CONFIG_YAML="${DATA_DIR}/config.${DOCKER_TAG}.yaml"
 
-CACHE_EXPIRY=86400
+#BUILD_PLATFORM_ARG='true'
+
+# 1 day
+#CACHE_EXPIRY=86400
+# 7 days
+#CACHE_EXPIRY=604800
+# 30 days
+CACHE_EXPIRY=2592000
+
+DOCKER_FILE='Dockerfile'
 
 [ ! -d "${DATA_DIR}" ] && mkdir -p "${DATA_DIR}"
 
@@ -28,8 +41,10 @@ get_url () {
 	cache_file="${DATA_DIR}/$(echo "${1}" | md5sum | cut -d' ' -f1)"
 
 	if [ -f "${cache_file}" ] && [ "$(( $(date +"%s") - $(date -r "${cache_file}" +"%s") ))" -lt "${CACHE_EXPIRY}" ]; then
+#		>&2 echo "Using cache: ${cache_file}"
 		cat "${cache_file}"
 	else
+#		>&2 echo "Downloading: ${1}"
 		page_data="$(curl -sL -w "%{http_code}\n" "${1}")"
 		http_code="${page_data:(-3)}"
 		if [ "${http_code}" = "200" ]; then
@@ -50,18 +65,168 @@ git_api_element () { git_api_data "${1}" "${2}" | sed -En 's|.*"'"${3}"'"\W+"([^
 # git_latest_release <repo> <tag_name>
 git_latest_release () { git_api_element "${1}" 'releases/latest' "${2:-tag_name}"; }
 
-# docker_api_tags <repo>
-docker_api_tags () {
-	local repo && repo="${1}"
-	[[ "${repo}" != *"/"* ]] && repo="library/${repo}"
-	get_url "https://registry.hub.docker.com/v2/repositories/${repo}/tags?page_size=100"
+
+# pypi_api_XXXX <project>
+pypi_api_data () {	get_url "https://pypi.org/simple/${1}"; }
+pypi_api_versions () { pypi_api_data "${1}" | grep -oP "(?<=${1}-)[0-9.]{4,}(?=.tar.gz)" | sort -uV; }
+pypi_api_latest_version () { pypi_api_versions "${1}" | tail -n1; }
+
+# py_musl_wheel_XXXX <wheel string>
+py_musl_wheel_versions () { docker_api_repo_tags "${MUSL_WHEEL_REPO}" | grep -oP '([0-9.]+)(?=-py)' | sort -uV; }
+py_musl_wheel_latest () { py_musl_wheel_versions "${1}" | tail -n1; }
+
+# parse the requirements.txt file for a module and determine the version to use
+# if the requirements.txt locks the max version with == or <= then use it
+# otherwise get the latest version available in moonbuggy2000/python-musl-wheels
+#
+# py_required_version <module>(-<ssl_library>) <requirements file or list>
+py_required_version () {
+	local modtag
+	local modname
+	local modstring
+	local modsign
+	local modver
+
+	modtag="${1}"
+
+	local requirements
+	case "${2}" in
+		"")	requirements="$(cat requirements.txt 2>/dev/null)" ;;
+		*requirements.txt) requirements="$(cat "${2}" 2>/dev/null)" ;;
+		*) requirements="${2}"
+	esac
+
+	[ -z "${requirements}" ] \
+		&& >&2 echo "No requirements in: ${2}" \
+		&& return 1
+
+	case "${modtag##*-}" in
+		openssl|libressl) modname="${modtag%-*}" ;;
+		*) modname="${modtag}" ;;
+	esac
+
+	modstring="$(echo "${requirements}" | xargs -n1 | grep -P "^#?${modname}\W")"
+	modsign="$(echo "${modstring}" | grep -oP "([<>=])(?==)")"
+
+	[ "${modsign}" = ">" ] \
+		&& modver="$(py_musl_wheel_latest "${modtag}")" \
+		|| modver="$(echo "${modstring}" | grep -oP '(?<=\W{2})[0-9.]*')"
+
+	[ -z "${modver}" ] \
+		&& >&2 echo "No version found for: ${1}" \
+		&& return 1
+
+	echo "${modver}"
 }
 
-# docker_api_tag_names <repo>
-docker_api_tag_names () { docker_api_tags "${1}" | sed 's/,/,\n/g' | sed -En 's|.*"name"\W+"([^"]*)".*|\1|p' | sort -uV; }
+python_get_module_from_string () {
+	local mod_namever
+	local mod_longname
+	local mod_name
+	local mod_ver
+#	local mod_ssllib
+	local mod_pyver
+
+	IFS='-' read -r -a input_array <<< "${1}"
+
+	mod_namever=''
+	for value in "${input_array[@]}"; do
+		case "${value}" in
+			py[0-9].[0-9])
+				mod_pyver="${value/py/}"
+				break
+				;;
+			amd64|arm64v8|armv6|armv7|386|ppc64le|s390x)
+				break
+				;;
+			*.[0-9].[0-9])
+				mod_ver="${value//[[:alpha:]]/}"
+				;;&
+			*)
+				mod_namever="${mod_namever}-${value}"
+				;;
+		esac
+	done
+
+	mod_namever="${mod_namever/#-/}"
+	mod_longname="${mod_namever%%[0-9].*}"
+
+	case "${mod_longname##*-}" in
+		libressl|openssl)
+#			mod_ssllib="${mod_longname##*-}"
+			mod_name="${mod_longname%-*}"
+			;;
+		*)
+			mod_name="${mod_longname}"
+			;;
+	esac
+
+	[ -z "${mod_ver}" ] \
+		&& mod_ver="$(docker_api_repo_tags "${DOCKER_REPO}" | grep -oP "(?<=${mod_longname})[0-9.]+(?=-py${mod_pyver})" | sort -uV | tail -n1)"
+	[ -z "${mod_ver}" ] \
+		&& mod_ver="$(pypi_api_latest_version "${mod_name}")"
+
+	# >&2 print_param "${mod_namever}" 'mod namever'
+	# >&2 print_param "${mod_longname}" 'mod longname'
+	# >&2 print_param "${mod_name}" 'mod name'
+	# >&2 print_param "${mod_ver}" 'mod ver'
+	# >&2 print_param "${mod_pyver}" 'mod pyver'
+
+	echo "${mod_longname}${mod_ver}"
+}
+
+docker_api_get_repo () {
+	local repo && repo="${1}"
+	[[ "${repo}" != *"/"* ]] && repo="library/${repo}"
+
+	URL="https://registry.hub.docker.com/v2/repositories/${repo}/tags?page_size=100"
+	while [ -n "${URL}" ]; do
+#		>&2 echo "Getting: ${URL}"
+		page="$(get_url "${URL}")"
+		URL="$(echo -e "${page}" | grep -oP '(?<=next":")[^"]*(?=")')"
+		echo -e "${page}" | sed 's/,/,\n/g'
+	done
+}
+
+# docker_api_repo_tags <repo>
+docker_api_repo_tags () { docker_api_get_repo "${1}" | sed -En 's|.*"name"\W+"([^"]*)".*|\1|p' | sort -uV; }
 
 # docker_api_latest <repo>
-docker_api_latest () { docker_api_tag_names "${1}" | grep '\.' | cut -d'-' -f1 | sort -uV | tail -n1; }
+docker_api_latest () { docker_api_repo_tags "${1}" | grep '\.' | cut -d'-' -f1 | sort -uV | tail -n1; }
+
+# search_repo_tags <pattern> (<tags>)
+#	useful to get latest versions from partial version strings
+#
+# e.g. to get a full X.Y.Z version number:
+#	SOURCE_MAJOR=3; SOURCE_MAJOR_LATEST="$(search_repo_tags "${SOURCE_MAJOR}" "${REPO_TAGS}")"
+#	SOURCE_MINOR=3.5; SOURCE_MINOR_LATEST="$(search_repo_tags "${SOURCE_MINOR}" "${REPO_TAGS}")"
+search_repo_tags () {
+	local repo_tags && repo_tags="${2}"
+	[ -z "${repo_tags}" ] && repo_tags="${SOURCE_REPO_TAGS}"
+	echo "${repo_tags}" | sed -En 's/^('"${1}"'[0-9.]*).*/\1/p' | sort -uV | tail -n1
+}
+
+# docker_container_contents <repo:tag> <outpud folder> <tar args>
+docker_container_contents () {
+	[ -z "${1}" ] && return
+
+	local import_image && import_image="${1}"
+	local output_dir &&	output_dir="${2:-./}"
+	local tar_args && tar_args="${3}"
+
+	echo "Importing: ${import_image}"
+
+	[ -n "${NOOP+set}" ] && [ -z "${WHEELS_FORCE_PULL+set}" ] && echo 'Status: [NOOP]' && return
+
+	if [ -z "${WHEELS_FORCE_PULL+set}" ] && docker inspect "${import_image}" > /dev/null 2>&1; then
+		echo "Status: Using existing local image."
+	elif ! docker pull "${import_image}" 2>/dev/null | grep Status; then
+		echo "Status: Image not found."
+		return
+	fi
+
+	docker save "${import_image}" | tar --wildcards -xf - -O -- */layer.tar | tar "${tar_args}" -ixf - -C "${output_dir}"
+}
 
 ## parse YAML configuration
 #
@@ -83,7 +248,25 @@ parse_yaml () {
 		}'
 }
 
+## get/set keys for a specific architecture
+#
+# get_arch_keys [<available_keys>]
+#
+get_arch_keys () {
+	local keys
+
+	[ $# -eq 0 ] \
+		&& keys="${available_keys:-}" \
+		|| keys="${1}"
+
+	for key in ${keys}; do
+		var="${arch}_${key}"
+		declare -g "${key}=${!var}"
+	done
+}
+
 ## get manifest-tool
+#
 get_manifest_tool () {
 	local existing_tool && existing_tool="$(command -v manifest-tool)"
 	if [ -n "${existing_tool}" ]; then
@@ -102,13 +285,13 @@ get_manifest_tool () {
 ifFunc () { type "${1}" 2> /dev/null | sed "s/${1}//" | grep -qwi function; }
 
 # ifFuncExec <func> <args>
-ifFuncExec () { ifFunc "${1}" && "${@}"; }
+ifFuncExec () { if ifFunc "${1}"; then "${@}"; fi; }
 
 # ifFuncSetVar <var> <func> <args>
 ifFuncSetVar () {
 	var="${1}" &&	shift
 	value=$(ifFuncExec "${@}")
-	if [ -n "${value}" ]; then declare -g "${var}=${value}"; else false; fi
+	if [ -n "${value}" ]; then declare -g "${var}=${value}"; fi
 }
 
 ## read any valid existing config

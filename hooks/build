@@ -4,6 +4,8 @@
 
 echo "--- build ---"
 
+set -e
+
 ## loop through valid arches
 #
 for arch in ${build_arches}; do
@@ -15,48 +17,87 @@ for arch in ${build_arches}; do
 		declare "${key}=${!var}"
 	done
 
-	if [ -n "${SOURCE_ARCH_PREFIX}" ]; then
-		[ -n "${QEMU_ARCH}" ] \
+	if [ -z "${SOURCE_IMAGE}" ]; then
+		true
+	elif [ -n "${SOURCE_ARCH_PREFIX}" ]; then
+		[ -n "${QEMU_ARCH:-}" ] \
 			&& FROM_IMAGE="${QEMU_PREFIX}/${SOURCE_IMAGE}" \
 			|| FROM_IMAGE="${SOURCE_IMAGE}"
+	elif ifFunc get_from_image; then
+		FROM_IMAGE="$(get_from_image)"
+	elif [ -n "${SOURCE_ARCH_TAG}" ]; then
+		FROM_IMAGE="${SOURCE_IMAGE}-${SOURCE_ARCH_TAG}"
 	else
-		ifFuncSetVar FROM_IMAGE get_from_image \
-			|| FROM_IMAGE="${SOURCE_IMAGE}-${TARGET_ARCH_TAG}"
+		FROM_IMAGE="${SOURCE_IMAGE}-${TARGET_ARCH_TAG}"
 	fi
 
-	print_param "${FROM_IMAGE}" 'From'
 	print_param "${TARGET_TAG}" 'Target tag'
-	print_param "${QEMU_ARCH}" 'QEMU arch'
+	print_param "${PLATFORM}" 'Platform'
 
-	if [ -n "${DOCKERFILE_OVERRIDE+set}" ]; then
+	# determine the Dockerfile to use
+	[ -n "${DOCKERFILE_OVERRIDE+set}" ] && \
 		DOCKER_FILE="${DOCKERFILE_OVERRIDE}"
-		[ -n "${QEMU_ARCH}" ] && DOCKER_FILE="${DOCKER_FILE}.qemu"
-	fi
+	[ -n "${QEMU_ARCH}" ] && [ -f "${DOCKER_FILE}.qemu" ] && \
+		DOCKER_FILE="${DOCKER_FILE}.qemu"
 	print_param "${DOCKER_FILE}" 'Dockerfile'
 
-	# prepare the build command
-	arg_string="--build-arg FROM_IMAGE=${FROM_IMAGE}"
+	## prepare build arguments
+	#
+	# make sure BUILD_ARGS array exists
+	declare -p BUILD_ARGS >/dev/null 2>&1 || declare -A BUILD_ARGS
 
-	for arg in "${!BUILD_ARGS[@]}"; do
+	# if available add FROM image
+	[ -n "${FROM_IMAGE}" ] && BUILD_ARGS+=([FROM_IMAGE]='From')
+
+	# if necessary add QEMU arguments
+	[ -n "${QEMU_ARCH}" ] && BUILD_ARGS+=([QEMU_ARCH]='QEMU arch' [QEMU_PREFIX]='QEMU prefix' [QEMU_DIR]='QEMU dir')
+
+	[ -n "${TARGET_ARCH_TAG}" ] && BUILD_ARGS+=([TARGET_ARCH_TAG]='Target arch')
+
+	##	get build args from any extra_build_args() in build.conf
+	#
+	# extra_build_args will have the current ${arch} available to it, so this
+	# is useful in the (ideally uncommom) scenario of a build arg varying
+	# between architectures
+	ifFuncSetVar extra_build_args extra_build_args
+	[ -n "${extra_build_args:-}" ] && for arg in ${extra_build_args}; do
+		BUILD_ARGS+=(["${arg%=*}"]="${arg#*=}")
+	done
+
+	## prepare the build command
+	#
+	build_cmd=(docker build --rm -f "${DOCKER_FILE}")
+	[ -n "${BUILD_NO_CACHE+set}" ] && build_cmd+=('--no-cache')
+
+	# add the build arguments
+#	for arg in "${!BUILD_ARGS[@]}"; do
+	for arg in $(echo "${!BUILD_ARGS[@]}" | xargs -n1 | sort); do
 		if [ -n "${!arg}" ]; then
 			print_param "${!arg}" "${BUILD_ARGS[${arg}]}"
-			arg_string="${arg_string} --build-arg ${arg}=${!arg}"
+			build_cmd+=(--build-arg "${arg}=${!arg}")
 		fi
 	done
 
-	[ -n "${QEMU_ARCH}" ] && \
-		arg_string="${arg_string} --build-arg QEMU_ARCH=${QEMU_ARCH}"
+	# if required add '--platform'
+	[ -n "${BUILD_PLATFORM_ARG}" ] && [ -n "${PLATFORM}" ] && \
+		build_cmd+=(--platform "${PLATFORM}")
 
-	arg_string="${arg_string} -f ${DOCKER_FILE}"
+	# add the target tag
+	[ -n "${TAG_OVERRIDE}" ] \
+		&& tag_string="${DOCKER_REPO}:${TAG_OVERRIDE}" \
+		|| tag_string="${DOCKER_REPO}:${TARGET_TAG}-${TARGET_ARCH_TAG}"
+	build_cmd+=(-t "${tag_string}")
 
-	build_cmd=(docker build ${arg_string} -t "${DOCKER_REPO}:${TARGET_TAG}-${TARGET_ARCH_TAG}" .)
-	pretty_build_cmd=$(echo "${build_cmd[*]}" | sed -r -e "s/(--build-arg |-f |-t )/\\\ \n\t\1/g")
+	# set the context
+	build_cmd+=(.)
 
-	printf '\n--- build command ---\n%s\n\n' "$pretty_build_cmd"
+	pretty_build_cmd=$(echo "${build_cmd[*]}" | sed -r -e "s/(--platform |--build-arg |-f |-t )/\\\ \n\t\1/g")
+	printf '\n--- build command ---\n%s\n\n' "${pretty_build_cmd}"
 
-	[[ -n "${NOOP+set}" || -n "${NOBUILD+set}" ]] && printf '[NOOP]\n\n' && continue
-
-	# build
-	"${build_cmd[@]}"
+	# if allowed, build
+	[[ -n "${NOOP+set}" || -n "${NO_BUILD+set}" ]] && printf '[NOOP]\n\n' && continue
+  "${build_cmd[@]}"
 	echo
 done
+
+set +e

@@ -1,19 +1,12 @@
 #! /bin/bash
 
 #NOOP='true'
-NOPUSH='true'
-#NOBUILD='true'
+#DO_PUSH='true'
+#NO_BUILD='true'
 
 DOCKER_REPO="${DOCKER_REPO:-moonbuggy2000/dnsmasq-updater}"
-DOCKER_TAG="${1:-latest}"
-IMAGE_NAME="${DOCKER_REPO}:${DOCKER_TAG}"
 
-[ -n "${NOOP}" ] && printf '** NOOP set. Will not execute pushes.\n\n'
+all_tags='alpine alpine-binary'
+default_tag='alpine'
 
-printf 'image name: %s\n\n' "${IMAGE_NAME}"
-
-. hooks/post_checkout
-. hooks/pre_build
-. hooks/build
-. hooks/push
-. hooks/post_push
+. "hooks/.build.sh"
