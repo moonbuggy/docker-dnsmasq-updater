@@ -14,7 +14,7 @@ IFS=' ' read -r -a base_tags <<< "$(echo "${base_tags[*]}" | xargs -n1 | sort -u
 print_param "${base_tags[*]}" "Base tags"
 echo
 
-[ -z "${NO_DEFAULT_PUSH}" ] && for arch in ${build_arches}; do
+[ -z "${NO_DEFAULT_PUSH}" ] && for arch in ${build_arches:-}; do
 #	echo "--- push (${arch}) ---"
 
 	TARGET_ARCH_TAG="${arch}_TARGET_ARCH_TAG"
@@ -36,7 +36,7 @@ echo
 		for arch_tag in "${arch_tags[@]}"; do
 			target_tag="${tag}-${arch_tag}"
 			target_image="${DOCKER_REPO}:${target_tag}"
-			
+
 			[ -z "${NOOP}" ] && [ -z "${NO_PUSH}" ] \
 				&& [ "${target_image}" != "${base_image}" ] && docker tag "${base_image}" "${target_image}"
 

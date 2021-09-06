@@ -16,7 +16,7 @@ if [ -z "${NO_QEMU}" ]; then
 	mkdir -p "${QEMU_DIR}/"
 
 	qemu_arches=()
-	for arch in ${build_arches}; do
+	for arch in ${build_arches:-}; do
 		qemu_var="${arch}_QEMU_ARCH"
 		qemu_arches+=("${!qemu_var}")
 	done
@@ -38,7 +38,7 @@ if [ -z "${NO_QEMU}" ]; then
 	fi
 fi
 
-if [ -n "${WHEEL_TAGS:-}" ]; then
+if [ -n "${WHEEL_TAGS:-}" ] && [ -z "${NO_PULL_WHEELS}" ]; then
 	echo "--- pre_build (python wheels) ---"
 	for arch in ${build_arches}; do
 		this_target_arch_tag="${arch}_TARGET_ARCH_TAG"

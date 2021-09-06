@@ -4,7 +4,7 @@
 
 # push_platforms <target_tag> <base_tag>
 push_platforms () {
-	[ -n "${platforms}" ] || { echo "No platforms to push."; return 0; }
+	[ -n "${platforms:-}" ] || { echo "No platforms to push."; return 0; }
 
 	local base_tag
 	[ -n "${2}" ] && base_tag="${2}" || base_tag="${1}"

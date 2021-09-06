@@ -8,11 +8,11 @@ set -e
 
 ## loop through valid arches
 #
-for arch in ${build_arches}; do
+for arch in ${build_arches:-}; do
 	echo "--- build (${arch}) ---"
 
 	# get arch config
-	for key in ${available_keys}; do
+	for key in ${available_keys:-}; do
 		var="${arch}_${key}"
 		declare "${key}=${!var}"
 	done
@@ -60,9 +60,16 @@ for arch in ${build_arches}; do
 	# is useful in the (ideally uncommom) scenario of a build arg varying
 	# between architectures
 	ifFuncSetVar extra_build_args extra_build_args
-	[ -n "${extra_build_args:-}" ] && for arg in ${extra_build_args}; do
-		BUILD_ARGS+=(["${arg%=*}"]="${arg#*=}")
-	done
+
+	# expect any return from extra_build_args in the form:
+	#		<key>=<description>=<value>
+	#
+	# multiples can be provided, one per line.
+	[ -n "${extra_build_args:-}" ] && while read -r line; do
+		arg_name="${line%%=*}"
+		declare "${arg_name}=${line##*=}"
+		BUILD_ARGS+=(["${arg_name}"]="$(echo "${line}" | cut -d'=' -f2)")
+	done < <(printf '%s\n' "${extra_build_args}")
 
 	## prepare the build command
 	#
@@ -70,7 +77,6 @@ for arch in ${build_arches}; do
 	[ -n "${BUILD_NO_CACHE+set}" ] && build_cmd+=('--no-cache')
 
 	# add the build arguments
-#	for arg in "${!BUILD_ARGS[@]}"; do
 	for arg in $(echo "${!BUILD_ARGS[@]}" | xargs -n1 | sort); do
 		if [ -n "${!arg}" ]; then
 			print_param "${!arg}" "${BUILD_ARGS[${arg}]}"

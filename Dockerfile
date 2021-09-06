@@ -7,7 +7,7 @@ ARG FROM_IMAGE="moonbuggy2000/alpine-s6-python:${PYTHON_VERSION}"
 
 ARG SSL_LIBRARY="openssl"
 
-ARG TARGET_ARCH_TAG="arm64"
+ARG TARGET_ARCH_TAG="amd64"
 
 ## build the virtual environment and prepare files
 #

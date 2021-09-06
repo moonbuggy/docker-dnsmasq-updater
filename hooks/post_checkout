@@ -87,7 +87,11 @@ add_print_param "${TARGET_TAG}" 'TARGET_TAG' 'Target tag'
 if [ -n "${BUILD_ARCH:-}" ]; then
 	build_arches="${BUILD_ARCH}"
 else
-	configured_arches="$(sed -En 's/(^\w*):\s*$/\1/p' "${ARCH_YAML}" | sort -u | xargs)"
+	if [ -n "${INCLUDED_ARCHES+set}" ]; then
+		configured_arches="$(echo ${INCLUDED_ARCHES} | sort -u | xargs)"
+	else
+		configured_arches="$(sed -En 's/(^\w*):\s*$/\1/p' "${ARCH_YAML}" | sort -u | xargs)"
+	fi
 	print_param "${configured_arches}" 'Configured arches'
 
 	if [ -n "${EXCLUDED_ARCHES+set}" ]; then

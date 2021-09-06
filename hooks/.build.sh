@@ -6,13 +6,13 @@ if [ -n "${NOOP}" ]; then
 	echo '** NOOP set. No operations will be performed.'
 	echo
 else
-	[ -n "${NO_BUILD}" ] && echo '** NO_PUSH set. No build will be perofrmed.'
+	[ -n "${NO_BUILD}" ] && echo '** NO_BUILD set. No build will be perofrmed.'
 	[ -n "${NO_PUSH}" ] && echo '** NO_PUSH set. No pushes will be performed.'
 	echo
 fi
 
-if [ $# -eq 0 ]; then tags="${default_tag}"
-elif [ "${1}" = 'all' ]; then tags="${all_tags}"
+if [ $# -eq 0 ]; then tags="${default_tag:-}"
+elif [ "${1}" = 'all' ]; then tags="${all_tags:-}"
 else tags="$*"
 fi
 
@@ -29,6 +29,13 @@ for DOCKER_TAG in ${tags}; do
 	. hooks/build
 done
 
+## then do post-build
+#
+for DOCKER_TAG in ${tags}; do
+	IMAGE_NAME="${DOCKER_REPO}:${DOCKER_TAG}"
+	. hooks/post_build
+done
+
 ## then push base tags
 #
 if [ -z "${POST_PUSH_ONLY+set}" ]; then
@@ -43,7 +50,7 @@ if [ -z "${POST_PUSH_ONLY+set}" ]; then
 
 		if [ -n "${NOOP+set}" ]; then echo '[NOOP]'
 		elif [ -n "${NO_PUSH+set}" ]; then echo '[NO_PUSH]'
-		else 
+		else
 			echo 'Pushing all tags.'
 			docker push --all-tags "${DOCKER_REPO}" | grep -i digest | cut -d' ' -f3
 			#docker push --all-tags "${DOCKER_REPO}"

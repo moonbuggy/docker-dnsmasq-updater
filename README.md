@@ -1,34 +1,34 @@
 # Docker Dnsmasq Updater
 Automatically update a remote hosts file with Docker container hostnames
 
-* [Rationale](#rationale)
-* [What It Does](#what-it-does)
-* [Usage](#usage)
-* [Setup](#setup)
-   * [Installation on Docker host](#installation-on-docker-host)
-   * [Installation of Docker container](#installation-of-docker-container)
-   * [Setup on dnsmasq server](#setup-on-dnsmasq-server)
-   * [Setup for other Docker containers](#setup-for-other-docker-containers)
-   * [Use with Traefik](#use-with-traefik)
-* [Known Issues](#known-issues)
-* [Links](#links)
-   * [Resources](#resources)
+*   [Rationale](#rationale)
+*   [What It Does](#what-it-does)
+*   [Usage](#usage)
+*   [Setup](#setup)
+    *   [Installation on Docker host](#installation-on-docker-host)
+    *   [Installation of Docker container](#installation-of-docker-container)
+    *   [Setup on dnsmasq server](#setup-on-dnsmasq-server)
+    *   [Setup for other Docker containers](#setup-for-other-docker-containers)
+    *   [Use with Traefik](#use-with-traefik)
+*   [Known Issues](#known-issues)
+*   [Links](#links)
+    *   [Resources](#resources)
 
 ## Rationale
-If you have a LAN with your router using dnsmasq for local DNS you may find yourself frequently updating a hosts file as you add or remove Docker containers. The currently available options for automating this typically require you to put Docker containers in a subdomain (e.g. *.docker.local) and/or, if you want to keep the containers in the top level domain (e.g. *.local), installing a full-fledged name server on the router and syncing it with the same in a container on the Docker host.
+If you have a LAN with your router using dnsmasq for local DNS you may find yourself frequently updating a hosts file as you add or remove Docker containers. The currently available options for automating this typically require you to put Docker containers in a subdomain (e.g. \*.docker.local) and/or, if you want to keep the containers in the top level domain (e.g. \*.local), installing a full-fledged name server on the router and syncing it with the same in a container on the Docker host.
 
 Docker Dnsmasq Updater allows host names to be added or removed automatically without added complexity or resource demands on the router. It can be run as a standalone script on the Docker host or in a container, it only needs access to the Docker socket and SSH access to the router (or any device providing local DNS with a hosts file).
 
 This script has been built with an AsusWRT/Entware router in mind, but should work with any device running dnsmasq or using a hosts file.
 
 ## What It Does
-- Runs on the Docker host OR in a container
-- On load, scans all running containers for a `dnsmasq.updater.enable` label
-- Optionally, on load, scans a specified Docker network for running containers
-- After loading, monitors the Docker socket for containers starting/stopping and optionally connecting/disconnecting to a specified Docker network
-- Finds any hostnames for containers meeting criteria
-- Updates a remote hosts file
-- Restarts a remote dnsmasq server
+-   Runs on the Docker host OR in a container
+-   On load, scans all running containers for a `dnsmasq.updater.enable` label
+-   Optionally, on load, scans a specified Docker network for running containers
+-   After loading, monitors the Docker socket for containers starting/stopping and optionally connecting/disconnecting to a specified Docker network
+-   Finds any hostnames for containers meeting criteria
+-   Updates a remote hosts file
+-   Restarts a remote dnsmasq server
 
 Currently the updater is built for a standalone Docker host, generally only working with a single host IP (with the exception of `extra_hosts`).
 
@@ -79,7 +79,7 @@ The SSH connection requires either a login/password combination or a login/key c
 
 The write delay (`--delay`) is useful because in some cases we expect to see multiple events in reasonably rapid succession, such as when a container is re-started or multiple containers are started together as part of a stack. The remote hosts file will be updated _\<delay> seconds_ after the last change to the script's local copy of hosts file. Set this to `0` to disable the delay.
 
-There's a hidden `--local_write_delay` argument, similar to `--delay`, which mediates the delay from a Docker event triggering a change to the local hosts file being written. This is useful during extremely rapid changes to the hosts configuration, primarily during dnsmasq-updater's startup/initilazation as it actively scans for containers to populate an empty dataset. This defaults to `3` and can disabled by `0`.
+There's a hidden `--local_write_delay` argument, similar to `--delay`, which mediates the delay from a Docker event triggering a change to the local copy of the hosts file being written. This is useful during extremely rapid changes to the hosts configuration, primarily during Dnsmasq Updater's startup/initilazation as it actively scans for containers to populate an empty dataset. This defaults to `3` and can be disabled by `0`.
 
 ## Setup
 Docker Dnsmasq Updater requires at least Python 3.6 and the docker, paramiko and python_hosts modules.
@@ -100,7 +100,7 @@ Put `dnsmasq_updater.conf` in `/etc/` or in the same directory as the script (wh
 docker run -d --name dnsmasq-updater -v /var/run/docker.sock:/var/run/docker.sock moonbuggy2000/dnsmasq-updater
 ```
 
-If you're using a config file instead of environment variables (see below) you'll need to persist it with `-v <conf volume>:/app/conf/dnsmasq_updater.conf`. If you're using an SSH key for authentication you can persist and use the `/app/keys/` folder.
+If you're using a config file instead of environment variables (see below) you'll need to persist it with `-v <host path>:/app/conf/dnsmasq_updater.conf`. If you're using an SSH key for authentication you can persist and use the `/app/keys/` folder.
 
 #### Tags
 To minimize the Docker image size, and to theoretically improve run times (I haven't benchmarked it because I believe it runs fast enough either way), the default build is binary, tagged as `latest` and `binary`.
@@ -115,18 +115,18 @@ The main `latest`, `binary` and `script` tags should automatically provide image
 #### Docker environment variables
 Almost all the command line parameters (see Usage) can be set with enviornment variables:
 
-* `DMU_IP`          - IP for the DNS records
-* `DMU_DOMAIN`      - domain/zone for the DNS records, defaults to `docker`
-* `DMU_NETWORK`     - Docker network to monitor, defaults to none/disabled
-* `DMU_SERVER`      - dnsmasq server address
-* `DMU_PORT`        - dnsmasq server SSH port, defaults to `22`
-* `DMU_LOGIN`       - dnsmasq server login name
-* `DMU_PASSWORD`    - password for the login name or, if a key is specified, decryption of the key
-* `DMU_KEY`         - full path to SSH key file
-* `DMU_REMOTE_FILE` - full path to the hosts file to update on the dnsmasq server
-* `DMU_REMOTE_CMD`  - remote command to execute to restart/update dnsmasq, defaults to `service restart_dnsmasq`
-* `DMU_DELAY`       - delay in seconds before writing remote hosts file, defaults to `10`
-* `DMU_DEBUG`       - set `True` to enable debug log output
+*   `DMU_IP`          - IP for the DNS records
+*   `DMU_DOMAIN`      - domain/zone for the DNS records, defaults to `docker`
+*   `DMU_NETWORK`     - Docker network to monitor, defaults to none/disabled
+*   `DMU_SERVER`      - dnsmasq server address
+*   `DMU_PORT`        - dnsmasq server SSH port, defaults to `22`
+*   `DMU_LOGIN`       - dnsmasq server login name
+*   `DMU_PASSWORD`    - password for the login name or, if a key is specified, decryption of the key
+*   `DMU_KEY`         - full path to SSH key file
+*   `DMU_REMOTE_FILE` - full path to the hosts file to update on the dnsmasq server
+*   `DMU_REMOTE_CMD`  - remote command to execute to restart/update dnsmasq, defaults to `service restart_dnsmasq`
+*   `DMU_DELAY`       - delay in seconds before writing remote hosts file, defaults to `10`
+*   `DMU_DEBUG`       - set `True` to enable debug log output
 
 ### Setup on dnsmasq server
 If you have an external storage device attached to your router it makes sense to keep the hosts file the updater generates there, to minimize writes to the router's onboard storage.
@@ -157,12 +157,12 @@ If you're using a key instead of a password you'll need to add the appropriate p
 ### Setup for other Docker containers
 To enable Docker Dnsmasq Updater for an individual container there are two labels that can be set:
 
-* `dnsmasq.updater.enable` - set this to "true"
-* `dnsmasq.updater.host`   - set this to the hostname you want to use
+*   `dnsmasq.updater.enable` - set this to "true"
+*   `dnsmasq.updater.host`   - set this to the hostname you want to use
 
 The updater will also add `hostname` and any `extra_hosts` attributes set for a container, so `dnsmasq.updater.host` isn't strictly necessary if hostnames are set as you want them for a container elsewhere.
 
-If you choose to monitor a user-defined Docker network then `dnsmasq.updater.enable` isn't strictly necessary either. The udpater assumes any container connecting to the monitored network is a container that you want working DNS for.
+If you choose to monitor a user-defined Docker network then `dnsmasq.updater.enable` isn't strictly necessary either. The updater assumes any container connecting to the monitored network is a container that you want working DNS for.
 
 Any defined `extra_hosts` will be given the IP from that definition.
 
@@ -171,7 +171,7 @@ Docker Dnsmasq Updater will pull Traefik hostnames set on containers via the ``t
 
 As all containers joining a monitored network are considered valid, if you monitor a user-defined network that Traefik uses you don't need to set any `dnsmasq.updater.*` labels at all, it gets what it needs from the network and Traefik labels.
 
-This scenario provides the easiest/laziest configuration route, with no Docker Dnsmasq Updater specific cofiguration required on containers.
+This scenario provides the easiest/laziest configuration route, with no specific Docker Dnsmasq Updater cofiguration required on containers.
 
 ## Known Issues
 #### pyinit_main: can't initialize time
@@ -183,14 +183,14 @@ Python runtime state: core initialized
 PermissionError: [Errno 1] Operation not permitted
 ```
 
-This is caused by [a bug in libseccomp](https://github.com/moby/moby/issues/40734) and can be resolved by either updating libseccomp on the Docker *host* (to at least 2.4.x) or running the container with `--security-opt seccomp=unconfined` set in the `docker run` command.
+This is caused by [a bug in libseccomp](https://github.com/moby/moby/issues/40734) and can be resolved by either updating libseccomp on the Docker _host_ (to at least 2.4.x) or running the container with `--security-opt seccomp=unconfined` set in the `docker run` command.
 
 On a Debian-based host (e.g. Armbian) it may be necessary to add the backports repo for apt to find the newest version.
 
 ## Links
-GitHub: https://github.com/moonbuggy/docker-dnsmasq-updater
+GitHub: <https://github.com/moonbuggy/docker-dnsmasq-updater>
 
-Docker Hub: https://hub.docker.com/r/moonbuggy2000/dnsmasq-updater
+Docker Hub: <https://hub.docker.com/r/moonbuggy2000/dnsmasq-updater>
 
 ### Resources
-Pre-built Python musl wheels: https://github.com/moonbuggy/docker-python-musl-wheels
+Pre-built Python musl wheels: <https://github.com/moonbuggy/docker-python-musl-wheels>
