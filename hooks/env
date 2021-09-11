@@ -80,53 +80,74 @@ pypi_api_latest_version () { pypi_api_versions "${1}" | tail -n1; }
 py_musl_wheel_versions () { docker_api_repo_tags "${MUSL_WHEEL_REPO}" | grep -oP "${1}\K([0-9.]+)(?=-py)" | sort -uV; }
 py_musl_wheel_latest () { py_musl_wheel_versions "${1}" | tail -n1; }
 
+#
+# py_requireed_vesion() and python_get_module_from_string() needs a refactor,
+# the whole python wheel thing was tacked on at the end, not really planned
+#
+
 # parse the requirements.txt file for a module and determine the version to use
 # if the requirements.txt locks the max version with == or <= then use it
 # otherwise get the latest version available in moonbuggy2000/python-musl-wheels
 #
-# py_required_version <module>(-<ssl_library>) <requirements file or list>
+# alternatively, allow a version specified as part of ${1} to override any
+# requirements.txt file
+#
+# py_required_version <module>(-<ssl_library>)([>|=]=<version>) <requirements file or list>
+#
 py_required_version () {
 	local modtag
 	local modname
 	local modstring
 	local modsign
 	local modver
+	local requirements
 
 	modtag="${1}"
 
-	local requirements
-	case "${2}" in
-		"")	requirements="$(cat requirements.txt 2>/dev/null)" ;;
-		*requirements.txt) requirements="$(cat "${2}" 2>/dev/null)" ;;
-		*) requirements="${2}"
-	esac
-
-	[ -z "${requirements}" ] \
-		&& >&2 echo "No requirements in: ${2}" \
-		&& return 1
+	# if there's an '=' in the first argument we won't check for a requirements.txt
+	# file, letting a '>=', '<=' or '==' in the argument take precedence
+	if [ "x${modtag//=/}" != "x${modtag}" ]; then
+		requirements="${modtag}"
+		modtag="${modtag/%[=<>]*/}"
+	else
+		case "${2}" in
+			'') requirements="$(cat requirements.txt 2>/dev/null)" ;;
+			*requirements.txt) requirements="$(cat "${2}" 2>/dev/null)" ;;
+			*) requirements="${2}" ;;
+		esac
+	fi
 
 	case "${modtag##*-}" in
 		openssl|libressl) modname="${modtag%-*}" ;;
 		*) modname="${modtag}" ;;
 	esac
 
-	modstring="$(echo "${requirements}" | xargs -n1 | grep -P "^#?${modname}\W")"
-	modsign="$(echo "${modstring}" | grep -oP "([<>=])(?==)")"
+	[ -n "${requirements}" ] \
+		&& modstring="$(echo "${requirements}" | xargs -n1 | grep -P "^#?${modname}\W")" \
+		&& modsign="$(echo "${modstring}" | grep -oP "([<>=])(?==)")"
 
-	[ "${modsign}" = ">" ] \
+	[ -n "${modsign}" ] && [ "x${modsign}" = "x>" ] \
 		&& modver="$(py_musl_wheel_latest "${modtag}")" \
 		|| modver="$(echo "${modstring}" | grep -oP '(?<=\W{2})[0-9.]*')"
 
+	# if we haven't found a version specified by this point default to the latest
 	[ -z "${modver}" ] \
 		&& modver="$(py_musl_wheel_latest "${modtag}")"
 
 	[ -z "${modver}" ] \
 		&& >&2 echo "No version found for: ${1}" \
+		&& >&2 echo "Does the module exist in the repo?" \
 		&& return 1
 
 	echo "${modver}"
 }
 
+# take a string that includes some or all elements of the wheel iamge tag pattern
+# and parse it to see if we can it to return a module name+version string
+#
+# wheel tag pattern: <module>(-<ssl_library)<mod_version>-py<py_version>-<arch>
+# returns: <module><mod_version>
+#
 python_get_module_from_string () {
 	local mod_namever
 	local mod_longname
@@ -159,6 +180,7 @@ python_get_module_from_string () {
 
 	mod_namever="${mod_namever/#-/}"
 	mod_longname="${mod_namever%%[0-9.]*}"
+	mod_longname="${mod_longname%-}"
 
 	case "${mod_longname##*-}" in
 		libressl|openssl)
@@ -171,7 +193,8 @@ python_get_module_from_string () {
 	esac
 
 	[ -z "${mod_ver}" ] \
-		&& mod_ver="$(docker_api_repo_tags "${DOCKER_REPO}" | grep -oP "(?<=${mod_longname})[0-9.]+(?=-py${mod_pyver})" | sort -uV | tail -n1)"
+		&& mod_ver="$(docker_api_repo_tags "${MUSL_WHEEL_REPO}" | \
+			grep -oP "(?<=${mod_longname})[0-9.]+(?=-py${mod_pyver})" | sort -uV | tail -n1)"
 	[ -z "${mod_ver}" ] \
 		&& mod_ver="$(pypi_api_latest_version "${mod_name}")"
 

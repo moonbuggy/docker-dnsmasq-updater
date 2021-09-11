@@ -108,9 +108,9 @@ To minimize the Docker image size, and to theoretically improve run times (I hav
 A build using the uncompiled Python script is available, tagged `script`.
 
 #### Architectures
-The main `latest`, `binary` and `script` tags should automatically provide images compatible with `amd64`, `arm`, `armhf`, `arm64`, `386` and `ppc64le` platforms. Tags for specific single-arch images are available, in the form `alpine-<arch>` and `alpine-binary-<arch>` for the `script` and `binary` builds respectively.
+The main `latest`, `binary` and `script` tags should automatically provide images compatible with `amd64`, `arm`/`armv7`, `armhf`/`armv6`, `arm64`, `386` and `ppc64le` platforms. Tags for specific single-arch images are available, in the form `alpine-<arch>` and `alpine-binary-<arch>` for the `script` and `binary` builds respectively.
 
-**Note:** The `binary`/`latest` builds are currently broken on ARMv7 and quite possibly other non-amd64 architectures. The `script` builds work on the ARMv7 devices I've been able to test, however, and are reasonably likely to work on any other architectures where the binary may not.
+**Note:** I'm only able to test on `amd64` and `armv7`. Both `script` and `binary` builds currently work on these architectures. The `script` build is more portable and less likely to have problems on un-tested architectures (although the `binary` builds _should_ be fine as well). If `binary` doesn't work on a particular piece of hardware, `script` would be worth trying.
 
 #### Docker environment variables
 Almost all the command line parameters (see Usage) can be set with enviornment variables:

@@ -1,4 +1,5 @@
 #!/usr/bin/with-contenv /bin/sh
+#shellcheck shell=sh
 
 DEBUG_STRING=''
 

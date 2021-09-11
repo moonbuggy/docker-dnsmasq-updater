@@ -13,3 +13,7 @@ dnsmasq_updater.dist
 *rsa*
 *.bak*
 test.conf
+.mypy_cache
+lint.sh
+delete-tag.sh
+

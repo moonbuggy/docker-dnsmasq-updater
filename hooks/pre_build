@@ -46,7 +46,10 @@ if [ -n "${WHEEL_TAGS:-}" ] && [ -z "${NO_PULL_WHEELS}" ]; then
 		mkdir -p "${IMPORTS_DIR}/${!this_target_arch_tag}"
 
 		for wheel_tag in ${WHEEL_TAGS}; do
-			import_image="${MUSL_WHEEL_REPO}:${wheel_tag}-py${PYTHON_VERSION}-${!this_target_arch_tag}"
+			# We were using PYTHON_VERSION but this can cause conflicts with container
+			# ENV during the build, so now we're using BUILD_PYTHON_VERSION in build.conf
+			# Let one default to the other here, until all build.conf files are updated
+			import_image="${MUSL_WHEEL_REPO}:${wheel_tag}-py${BUILD_PYTHON_VERSION:-${PYTHON_VERSION}}-${!this_target_arch_tag}"
 			docker_container_contents "${import_image}" "${IMPORTS_DIR}/${!this_target_arch_tag}/"
 		done
 	done

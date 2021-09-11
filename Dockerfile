@@ -1,44 +1,22 @@
-ARG PYTHON_VERSION="3.8"
-ARG APP_PATH="/app"
-ARG VIRTUAL_ENV="${APP_PATH}/venv"
+ARG BUILD_PYTHON_VERSION="3.9"
+ARG FROM_IMAGE="moonbuggy2000/alpine-s6-python:${BUILD_PYTHON_VERSION}"
+
 ARG BUILDER_ROOT="/builder-root"
-
-ARG FROM_IMAGE="moonbuggy2000/alpine-s6-python:${PYTHON_VERSION}"
-
-ARG SSL_LIBRARY="openssl"
-
-ARG TARGET_ARCH_TAG="amd64"
 
 ## build the virtual environment and prepare files
 #
 FROM "${FROM_IMAGE}" AS builder
 
 # QEMU static binaries from pre_build
-ARG QEMU_DIR
-ARG QEMU_ARCH
+ARG QEMU_DIR=""
+ARG QEMU_ARCH=""
 COPY _dummyfile "${QEMU_DIR}/qemu-${QEMU_ARCH}-static*" /usr/bin/
 
-# these only need to be installed if we're building modules, but since the musl wheels aren't
-# automatically kept updated we leave the build environment installed so we're capable of
-# running independently if/when PyPi wants to install newer versions that the pre-built wheels
-ARG SSL_LIBRARY
-RUN apk -U add --no-cache \
-		"${SSL_LIBRARY}-dev" \
-		cargo \
-		ccache \
-		gcc \
-		libffi-dev \
-		make \
-		musl-dev \
-		openssl-dev \
-		python3-dev \
-		rust
-
-ARG APP_PATH
+ARG APP_PATH="/app"
 ARG BUILDER_ROOT
 WORKDIR "${BUILDER_ROOT}${APP_PATH}"
 
-ARG VIRTUAL_ENV
+ARG VIRTUAL_ENV="${APP_PATH}/venv"
 ENV	VIRTUAL_ENV="${VIRTUAL_ENV}" \
 	PYTHONDONTWRITEBYTECODE="1" \
 	PYTHONUNBUFFERED="1" \
@@ -50,7 +28,7 @@ RUN python3 -m pip install --upgrade virtualenv \
 COPY ./requirements.txt ./
 
 # Python wheels from pre_build
-ARG TARGET_ARCH_TAG
+ARG TARGET_ARCH_TAG="amd64"
 ARG IMPORTS_DIR=".imports"
 COPY _dummyfile "${IMPORTS_DIR}/${TARGET_ARCH_TAG}*" "/${IMPORTS_DIR}/"
 
@@ -58,22 +36,31 @@ COPY _dummyfile "${IMPORTS_DIR}/${TARGET_ARCH_TAG}*" "/${IMPORTS_DIR}/"
 ENV ORIGINAL_PATH="$PATH"
 ENV PATH="${BUILDER_ROOT}${VIRTUAL_ENV}/bin:$PATH"
 
-# retain the ability to build from source for all arches
-ARG RUST_REQUIRED
-RUN RUST_VERSION="$(rustc --version | cut -d' ' -f2)" \
-	&& if [ "${QEMU_ARCH}" = 'arm' ] \
-		|| [ "$(printf '%s\n' "${RUST_REQUIRED}" "${RUST_VERSION}" | sort -V | head -n1)" != "${RUST_REQUIRED}" ]; then \
-			echo "*** CRYPTOGRAPHY_DONT_BUILD_RUST"; export "CRYPTOGRAPHY_DONT_BUILD_RUST=1"; fi \
-	&& python3 -m pip install --only-binary=:all: --find-links "/${IMPORTS_DIR}/"  -r requirements.txt \
-	|| python3 -m pip install --find-links "/${IMPORTS_DIR}/" -r requirements.txt
-
-# lose the ability to build from source on all arches
-#RUN python3 -m pip install --only-binary=:all: --find-links "/${IMPORTS_DIR}/"  -r requirements.txt \
-#	|| python3 -m pip install --find-links "/${IMPORTS_DIR}/" -r requirements.txt
+# First try and build from binary wheels (provided by moonbuggy2000/python-musl-wheels)
+# because it's quick and easy. Otherwise, install software and build from source.
+ARG SSL_LIBRARY="openssl"
+ARG RUST_REQUIRED="1.41.1"
+RUN if ! python3 -m pip install --only-binary=:all: --find-links "/${IMPORTS_DIR}/" -r requirements.txt; then \
+			echo "ERROR: Could not build with binary wheels. Attempting to build from source.."; \
+			apk add --no-cache \
+				"${SSL_LIBRARY}-dev" \
+				cargo \
+				ccache \
+				gcc \
+				libffi-dev \
+				make \
+				musl-dev \
+				openssl-dev \
+			#	python3-dev \
+				rust; \
+			RUST_VERSION="$(rustc --version | cut -d' ' -f2)"; \
+			if [ "$(printf '%s\n' "${RUST_REQUIRED}" "${RUST_VERSION}" | sort -V | head -n1)" != "${RUST_REQUIRED}" ]; then \
+				echo "*** CRYPTOGRAPHY_DONT_BUILD_RUST ***"; export "CRYPTOGRAPHY_DONT_BUILD_RUST=1"; fi; \
+			python3 -m pip install --find-links "/${IMPORTS_DIR}/" -r requirements.txt; \
+		fi
 
 # organize files
-RUN mkdir ./keys \
-	&& mkdir ./conf
+RUN mkdir ./keys
 
 COPY ./dnsmasq_updater.conf ./conf/
 COPY ./dnsmasq_updater.py ./dnsmasq_updater

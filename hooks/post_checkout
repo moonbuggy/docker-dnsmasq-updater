@@ -144,10 +144,17 @@ arch_yaml_keys="$(sed -En 's|^[[:space:]][[:space:]](.*):.*|\1|p' ${ARCH_YAML} |
 # add_param "${available_keys}" 'available_keys'
 add_param "${arch_yaml_keys}" 'available_keys'
 
+# expect PYTHON_WHEELS to be a list of wheels each set as such:
+#
+#		<module_name>(-<ssl_library)([>|=]=<module_version)
+#
 if [ -n "${PYTHON_WHEELS+set}" ]; then
 	wheel_tags=''
 	for wheel in ${PYTHON_WHEELS}; do
-		wheel_tags="${wheel}$(py_required_version "${wheel}") ${wheel_tags}"
+		wheel_version="$(py_required_version "${wheel}")" \
+			|| continue
+		wheel_name="${wheel%%[=<>]*}"
+		wheel_tags="${wheel_name%-}${wheel_version} ${wheel_tags}"
 	done
 	add_print_param "${wheel_tags}" 'WHEEL_TAGS' 'Python wheels'
 fi

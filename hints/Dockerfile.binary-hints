@@ -1,0 +1,52 @@
+ARG FROM_IMAGE="moonbuggy2000/dnsmasq-updater:alpine"
+
+ARG TARGET_ARCH_TAG="amd64"
+
+## fetch files we need
+#
+FROM moonbuggy2000/fetcher:latest AS fetcher
+
+RUN wget -q https://raw.githubusercontent.com/Nuitka/NUITKA-Utilities/master/hinted-compilation/get-hints.py
+
+## build the image
+#
+FROM "${FROM_IMAGE}"
+
+# QEMU static binaries from pre_build
+ARG QEMU_DIR
+ARG QEMU_ARCH
+COPY _dummyfile "${QEMU_DIR}/qemu-${QEMU_ARCH}-static*" /usr/bin/
+
+# install sshd
+RUN apk -U add --no-cache \
+		openssh
+
+RUN cd /etc/ssh \
+	&& ssh-keygen -A
+
+# Python wheels from pre_build
+ARG IMPORTS_DIR=".imports"
+ARG TARGET_ARCH_TAG
+COPY _dummyfile "${IMPORTS_DIR}/${TARGET_ARCH_TAG}*" "/${IMPORTS_DIR}/"
+
+# get get-hints.py
+ARG APP_PATH="/app"
+WORKDIR "${APP_PATH}"
+
+# activate virtual env
+ARG VIRTUAL_ENV="${APP_PATH}/venv"
+ENV PATH="${VIRTUAL_ENV}/bin:$PATH"
+
+RUN python3 -m pip install --find-links "/${IMPORTS_DIR}/" nuitka
+
+COPY hints/entrypoint.sh /
+RUN chmod a+x /entrypoint.sh
+
+COPY --from=fetcher get-hints.py .
+
+ARG TARGET_ARCH_TAG
+ENV TARGET_ARCH_TAG="${TARGET_ARCH_TAG}" \
+	APP_PATH="${APP_PATH}"
+
+CMD ["/entrypoint.sh"]
+ENTRYPOINT ["/bin/ash"]

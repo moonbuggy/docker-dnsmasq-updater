@@ -2,8 +2,8 @@
 #certifi>=2020.12.5
 #cffi==1.14.5
 #chardet==4.0.0
-cryptography==3.4.7
-docker==4.4.4
+cryptography==3.4.8
+docker==5.0.2
 #idna==2.10
 paramiko==2.7.2
 #pycparser==2.20

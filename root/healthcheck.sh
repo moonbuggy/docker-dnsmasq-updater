@@ -5,8 +5,7 @@ ready="$(s6-svstat -o ready /var/run/s6/services/dnsmasq-updater/)"
 
 echo "Up: ${up}, Ready: ${ready}"
 
-if [ "$up" == "true" ] && [ "$ready" == "true" ]; then
-	exit 0
-else
-	exit 1
-fi
+[ "x${up}" = "xtrue" ] && [ "x${ready}" = "xtrue" ] \
+	&& exit 0
+
+exit 1
