@@ -11,12 +11,20 @@ else
 	echo
 fi
 
+tags=''
 if [ $# -eq 0 ]; then tags="${default_tag:-}"
 elif [ "${1}" = 'all' ]; then tags="${all_tags:-}"
+elif [ "${1:0:4}" = "all_" ]; then tags="${!1:-}"
+elif [ "${1:0:4}" = "all-" ]; then # assume tags with hypens are "all-<arch>"
+	for tag in ${all_tags:-}; do
+		tags+="${tag}-${1##*-} "
+	done
 else tags="$*"
 fi
 
 tags="$(echo "${tags}" | xargs -n1 | sort -uV | xargs)"
+echo "Build tags: ${tags}"
+echo
 
 ## first build everything
 #
@@ -25,16 +33,19 @@ for DOCKER_TAG in ${tags}; do
 	printf 'Building: %s\n\n' "${IMAGE_NAME}"
 
 	. hooks/post_checkout
+	[ ! -z "${SKIP_BUILD+set}" ] && echo 'Skipping build.' && continue
 	. hooks/pre_build
 	. hooks/build
 done
 
 ## then do post-build
 #
+echo "--- post_build ---"
 for DOCKER_TAG in ${tags}; do
 	IMAGE_NAME="${DOCKER_REPO}:${DOCKER_TAG}"
 	. hooks/post_build
 done
+echo
 
 ## then push base tags
 #
@@ -75,9 +86,16 @@ fi
 
 ## clean temporary files
 #
-[ -n "${CLEAN+set}" ] \
-	&& echo '--- cleaning temporary files ---' \
-	&& rm -rf _dummyfile "${QEMU_DIR}" "${IMPORTS_DIR}" >/dev/null 2>&1 \
-	&& echo
+# we may want to keep these files to save a few seconds on imports
+if [ ! -z "${CLEAN+set}" ] || [ -z "${NO_CLEAN+set}" ]; then
+	echo '--- clean ---'
+	echo 'Removing temp files..'
+	rm -rf _dummyfile "${QEMU_DIR}" "${IMPORTS_DIR}" >/dev/null 2>&1
+	echo
+fi
 
+# remove this regardless
 rm -f _dummyfile >/dev/null 2>&1
+
+echo 'Done.'
+echo

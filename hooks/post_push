@@ -6,6 +6,14 @@
 push_platforms () {
 	[ -n "${platforms:-}" ] || { echo "No platforms to push."; return 0; }
 
+	# remove duplicates
+	clean_platforms=''
+	for platform in $(echo ${platforms} | xargs -d',' -n1); do
+		echo "${clean_platforms}" | xargs -d',' | grep -q "${platform}" \
+			|| clean_platforms+=",${platform}"
+	done
+	platforms="${clean_platforms:1}"
+
 	local base_tag
 	[ -n "${2}" ] && base_tag="${2}" || base_tag="${1}"
 
@@ -18,22 +26,43 @@ push_platforms () {
 	IFS=' ' read -r -a manifest_cmd <<< "$(get_manifest_tool)"
 	manifest_cmd+=(push from-args --platforms "${platforms}" --template "${DOCKER_REPO}:${base_tag}ARCHVARIANT" --target "${DOCKER_REPO}:${target_tag}")
 
-	# pretty_manifest_cmd="$(echo "${manifest_cmd[*]}" | sed -r -e "s/(--)/\\\ \n\t\1/g")"
-	# echo '--- manifest command ---' && printf '%s\n' "${pretty_manifest_cmd}"
+	[ ! -z "${DEBUG+set}" ] \
+		&& pretty_manifest_cmd="$(echo "${manifest_cmd[*]}" | sed -r -e "s/(--)/\\\ \n\t\1/g")" \
+		&& echo '--- manifest command ---' && printf '%s\n' "${pretty_manifest_cmd}"
 
 	printf '%-20s ' "${target_tag}"
 
 	[ -n "${NOOP+set}" ] && echo '[NOOP]' && return 0
 	[ -n "${NO_PUSH+set}" ] && echo '[NO_PUSH]' && return 0
 #	{ "${manifest_cmd[@]}" | grep -i Digest | cut -d' ' -f2; } || { echo 'Could not push manifest.'; return 1; }
-	"${manifest_cmd[@]}" || { echo 'Could not push manifest.'; return 1; }
+#	"${manifest_cmd[@]}" || { echo 'Could not push manifest.'; return 1; }
+	local error
+	error="$("${manifest_cmd[@]}" 2>&1)";
+
+	if [ -n "${error}" ]; then
+		case ${error} in
+			*toomanyrequests*)
+				echo 'rate limited, exiting.'
+				exit 1
+				;;
+			*)
+				printf 'unknown error:\n%s\n' "${error}"
+				exit 1
+				;;
+		esac
+		return 1
+	fi
 	echo
 }
 
 if [ -n "${SINGLE_ARCH_BUILD}" ]; then
 	echo "Single arch build, not pushing manifests."
+elif [ ! -z "${SKIP_BUILD+set}" ]; then
+	echo "Skipping."
 elif [ -n "${NO_MANIFEST+set}" ]; then
 	echo "NO_MANIFEST is set, skipping post_push."
+elif [ -n "${NO_POST_PUSH+set}" ]; then
+	echo "NO_POST_PUSH is set, skipping post_push."
 else
 	manifest_tags=()
 
@@ -54,6 +83,12 @@ else
 	fi
 fi
 echo
+
+# push README.md
+if [ ! -z "${PUSH_README}" ] && [ -f "./README.md" ]; then
+	echo "Pushing README.md.."
+	docker pushrm "${DOCKER_REPO}" -f ./README.md
+fi
 
 ##	call any post_push_end() from build.conf
 #

@@ -12,49 +12,53 @@ base_tags+=("${TARGET_TAG}")
 
 IFS=' ' read -r -a base_tags <<< "$(echo "${base_tags[*]}" | xargs -n1 | sort -u | xargs)"
 print_param "${base_tags[*]}" "Base tags"
-echo
 
-[ -z "${NO_DEFAULT_PUSH}" ] && for arch in ${build_arches:-}; do
-#	echo "--- push (${arch}) ---"
+if [ ! -z "${SKIP_BUILD+set}" ]; then
+	echo "Skipping."
+	echo	echo
+else
+	[ -z "${NO_DEFAULT_PUSH}" ] && for arch in ${build_arches:-}; do
+	#	echo "--- push (${arch}) ---"
 
-	TARGET_ARCH_TAG="${arch}_TARGET_ARCH_TAG"
-	arch_tags=("${!TARGET_ARCH_TAG}")
+		TARGET_ARCH_TAG="${arch}_TARGET_ARCH_TAG"
+		arch_tags=("${!TARGET_ARCH_TAG}")
 
-	EXTRA_ARCH_TAGS="${arch}_EXTRA_ARCH_TAGS"
-#	[ -n "${!EXTRA_ARCH_TAGS}" ] && arch_tags+=(${!EXTRA_ARCH_TAGS})
-	for extra_tag in ${!EXTRA_ARCH_TAGS}; do
-		arch_tags+=("${extra_tag}")
-	done
-
-	[ -z "${PUSH_ALL_TAGS+set}" ] \
-		&& echo "--- push (${arch_tags[*]}) ---" \
-		|| echo "--- tags (${arch_tags[*]}) ---"
-
-	base_image="${DOCKER_REPO}:${TARGET_TAG}-${!TARGET_ARCH_TAG}"
-
-	for tag in "${base_tags[@]}"; do
-		for arch_tag in "${arch_tags[@]}"; do
-			target_tag="${tag}-${arch_tag}"
-			target_image="${DOCKER_REPO}:${target_tag}"
-
-			[ -z "${NOOP}" ] && [ -z "${NO_PUSH}" ] \
-				&& [ "${target_image}" != "${base_image}" ] && docker tag "${base_image}" "${target_image}"
-
-			if [ -n "${PUSH_ALL_TAGS}" ]; then
-				echo -n "${target_tag} "
-			else
-				printf '%-40s ' "${target_tag}"
-
-				[ -n "${NOOP}" ] && { echo '[NOOP]'; } && continue
-				[ -n "${NO_PUSH}" ] && { echo '[NO_PUSH]'; } && continue
-
-				docker push "${target_image}" | grep -i digest | cut -d' ' -f3
-			fi
+		EXTRA_ARCH_TAGS="${arch}_EXTRA_ARCH_TAGS"
+	#	[ -n "${!EXTRA_ARCH_TAGS}" ] && arch_tags+=(${!EXTRA_ARCH_TAGS})
+		for extra_tag in ${!EXTRA_ARCH_TAGS}; do
+			arch_tags+=("${extra_tag}")
 		done
-	done
-	echo
-done
 
-##	call any push_end() from build.conf
-#
-ifFuncExec push_end
+		[ -z "${PUSH_ALL_TAGS+set}" ] \
+			&& echo "--- push (${arch_tags[*]}) ---" \
+			|| echo "--- tags (${arch_tags[*]}) ---"
+
+		base_image="${DOCKER_REPO}:${TARGET_TAG}-${!TARGET_ARCH_TAG}"
+
+		for tag in "${base_tags[@]}"; do
+			for arch_tag in "${arch_tags[@]}"; do
+				target_tag="${tag}-${arch_tag}"
+				target_image="${DOCKER_REPO}:${target_tag}"
+
+				[ -z "${NOOP}" ] && [ -z "${NO_PUSH}" ] \
+					&& [ "${target_image}" != "${base_image}" ] && docker tag "${base_image}" "${target_image}"
+
+				if [ -n "${PUSH_ALL_TAGS}" ]; then
+					echo -n "${target_tag} "
+				else
+					printf '%-40s ' "${target_tag}"
+
+					[ -n "${NOOP}" ] && { echo '[NOOP]'; } && continue
+					[ -n "${NO_PUSH}" ] && { echo '[NO_PUSH]'; } && continue
+
+					docker push "${target_image}" | grep -i digest | cut -d' ' -f3
+				fi
+			done
+		done
+		echo
+	done
+
+	##	call any push_end() from build.conf
+	#
+	ifFuncExec push_end
+fi

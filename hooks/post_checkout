@@ -1,4 +1,5 @@
 #! /usr/bin/env bash
+# shellcheck shell=bash
 
 . hooks/env
 
@@ -19,7 +20,7 @@ ifFunc post_checkout_start && post_checkout_start
 ## parse Docker environment variables
 #
 case "${DOCKER_TAG##*-}" in
-	i386|amd64|armv*|arm64*|ppc64*|s390x)
+	i*86|amd64|arm*|ppc64*|mips*|riscv64|s390x)
 		[ -z "${TARGET_TAG+set}" ] && \
 			TARGET_TAG="${DOCKER_TAG%-*}"
 		add_param "${DOCKER_TAG##*-}" 'BUILD_ARCH'
@@ -52,65 +53,72 @@ ifFuncSetVar SOURCE_TAG get_source_tag
 [ -z ${SOURCE_TAG+set} ] && SOURCE_TAG="${TARGET_TAG}"
 add_param "${SOURCE_TAG}" 'SOURCE_TAG'
 
-[ -n "${SOURCE_REPO}" ] \
-	&& SOURCE_IMAGE="${SOURCE_REPO}:${SOURCE_TAG}" \
-	&& SOURCE_MANIFEST="${DATA_DIR}/manifest.${SOURCE_TAG}"
-
-## get source manifest
-#
-if [ -z "${SOURCE_MANIFEST}" ]; then
-	echo "No source image, no manifest to pull."
-elif [ ! -s "${SOURCE_MANIFEST}" ] || [ "$(( $(date +"%s") - $(date -r "${SOURCE_MANIFEST}" +"%s") ))" -gt "${CACHE_EXPIRY}" ]; then
-	manifest_cmd=("$(get_manifest_tool)" inspect "${SOURCE_IMAGE}")
-
-	echo 'Fetching source manifest..'
-
-#	pretty_manifest_cmd="$(echo "${manifest_cmd[*]}" | sed -r -e "s/(--)/\\\ \n\t\1/g")"
-#	printf '\n--- manifest command ---\n%s\n' "${pretty_manifest_cmd}"
-
-	# manifest_data="$("${manifest_cmd[@]}" 2> /dev/null)"
-	manifest_data="$("${manifest_cmd[@]}")"
-	[ -z "${manifest_data}" ] \
-		&& { printf '\nCould not find manifest for source image: %s\nExiting.\n' "${SOURCE_IMAGE}"; exit 1; }
-
-	echo "${manifest_data}" > "${SOURCE_MANIFEST}";
+# set SOURCE_IMAGE, pull manifest if we're not pulling from arch-specific repos
+if [ -n "${SOURCE_REPO}" ]; then
+	SOURCE_IMAGE="${SOURCE_REPO}:${SOURCE_TAG}"
+	[ -z "${SOURCE_ARCH_PREFIX+set}" ] \
+		&& { SOURCE_MANIFEST="$(get_manifest "${SOURCE_IMAGE}")" || { echo "Exiting."; exit 1; }; }
 else
-	echo "Using cached manifest."
+	echo "No source image, no manifest to pull."
 fi
-echo
 
 print_param "${DOCKER_TAG}" 'Docker tag'
 add_print_param "${TARGET_TAG}" 'TARGET_TAG' 'Target tag'
 
 ## determine the arches to build
 #
-if [ -n "${BUILD_ARCH:-}" ]; then
+# use BUILD_ARCH if set
+#
+if [ -n "${BUILD_ARCH}" ]; then
 	build_arches="${BUILD_ARCH}"
+	for excluded_arch in ${EXCLUDED_ARCHES:-}; do
+		build_arches="$(echo "${build_arches}" | xargs -n1 | grep -vP "${excluded_arch}$" | xargs)"
+	done
 else
-	if [ -n "${INCLUDED_ARCHES+set}" ]; then
+	# configured_arches is populated from arch.yaml or INCLUDED_ARCHES
+	# and then EXCLUDED_ARCHES is applied
+	if [ ! -z "${INCLUDED_ARCHES+set}" ]; then
 		configured_arches="$(echo ${INCLUDED_ARCHES} | sort -u | xargs)"
 	else
 		configured_arches="$(sed -En 's/(^\w*):\s*$/\1/p' "${ARCH_YAML}" | sort -u | xargs)"
 	fi
 	print_param "${configured_arches}" 'Configured arches'
 
-	if [ -n "${EXCLUDED_ARCHES+set}" ]; then
+	if [ ! -z "${EXCLUDED_ARCHES+set}" ]; then
 		print_param "${EXCLUDED_ARCHES}" 'Excluded arches'
 		for excluded in ${EXCLUDED_ARCHES}; do
 			configured_arches="$(echo "${configured_arches}" | xargs -n1 | grep -v "^${excluded}$" | sort -u | xargs)"
 		done
 	fi
 
-	[ -n "${SOURCE_ARCHES:-}" ] \
-		&& source_arches="${SOURCE_ARCHES}" \
-		|| source_arches="$(sed -n -e 'N;s/.*Arch:\s*\(\w*\)\n.*Variant:\s*\(\w*\)/\1\2/p;D;' "${SOURCE_MANIFEST}" \
+	# find available architectures in source repo(s)
+	#
+	# if nothing is cached and SOURCE_ARCH_PREFIX is set, pull manifest from each
+	# of the '<arch>/' repos (e.g. arm32v7/<image>, s390x/<image>, etc..)
+	#
+	# otherwise use the multi-arch manifest we pulled earlier, SOURCE_MANIFEST
+	#
+	if [ -n "${SOURCE_ARCHES:-}" ]; then
+		source_arches="${SOURCE_ARCHES}"
+	elif [ ! -z "${SOURCE_ARCH_PREFIX+set}" ] && [ -z "${BUILD_BUILDX}" ]; then
+		unset source_arches
+		for arch in ${configured_arches}; do
+			arch_prefix_var="${arch}_QEMU_PREFIX"
+			import_image="${!arch_prefix_var:-_}/${SOURCE_REPO}:${SOURCE_TAG}"
+			[ -s "$(get_manifest "${import_image}")" ] && source_arches+="${arch} "
+		done
+	else
+		print_param "${SOURCE_MANIFEST}" 'Source manifest'
+		source_arches="$(sed -n -e 'N;s/.*Arch:\s*\(\w*\)\n.*Variant:\s*\(\w*\)/\1\2/p;D;' "${SOURCE_MANIFEST}" \
 			| sed -e 's/[^\w]*386/i386/' | sort -u | xargs)"
+	fi
 
 	# default arch if manifest-tool doesn't return anything useful
 	[ -z "${source_arches}" ] && source_arches='amd64'
 
 	print_param "${source_arches}" 'Source arches'
 
+	# build_arches is the intersection of configtured_arches and source_arches
 	build_arches="$(comm -12 \
 		<(echo "${configured_arches}" | xargs -n1 | LC_ALL=C sort) \
 		<(echo "${source_arches}" | xargs -n1 | LC_ALL=C sort) \

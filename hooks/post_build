@@ -2,9 +2,8 @@
 
 . hooks/env
 
-#echo "--- post_build ---"
+# echo "--- post_build ---"
 
 ##	call any post_build() from build.conf
 #
-ifFuncExec post_build
-echo
+[ -z "${SKIP_BUILD+set}" ] && ifFuncExec post_build

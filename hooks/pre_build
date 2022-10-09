@@ -6,35 +6,41 @@ echo "--- pre_build ---"
 
 touch '_dummyfile'
 
+# if [ -z "${NO_QEMU}" ] || [ ! -z "${BUILD_BUILDX}" ]; then
 if [ -z "${NO_QEMU}" ]; then
 	## register qemu-*-static for all supported processors except the current one
 	docker run --rm --privileged multiarch/qemu-user-static:register --reset >/dev/null \
 		&& echo 'Registered QEMU interpreters.'
 	echo
 
-	## get qemu-*-static for all build architectures
-	mkdir -p "${QEMU_DIR}/"
+	## don't need the arch-specific static binaries with buildx
+	if [ -z "${BUILD_BUILDX}" ]; then
+		# get qemu-*-static for all build architectures
+		mkdir -p "${QEMU_DIR}/"
 
-	qemu_arches=()
-	for arch in ${build_arches:-}; do
-		qemu_var="${arch}_QEMU_ARCH"
-		qemu_arches+=("${!qemu_var}")
-	done
-
-	if [ -n "${qemu_arches[*]}" ]; then
-		echo "--- pre_build (QEMU) ---"
-
-		for qemu_arch in $(echo "${qemu_arches[@]}" | xargs -n1 | sort -uV | xargs); do
-			qemu_image="multiarch/qemu-user-static:x86_64-${qemu_arch}"
-
-			[ -f "${QEMU_DIR}/qemu-${qemu_arch}-static" ] \
-				&& echo "Importing: ${qemu_image}" \
-				&& echo "Status: Using existing file." \
-				&& continue
-
-			docker_container_contents "${qemu_image}" "${QEMU_DIR}/" '--strip-components=2'
+		qemu_arches=()
+		for arch in ${build_arches:-}; do
+			qemu_var="${arch}_QEMU_ARCH"
+			qemu_arches+=("${!qemu_var}")
 		done
-		echo
+
+		if [ -n "${qemu_arches[*]}" ]; then
+			echo "--- pre_build (QEMU) ---"
+
+			for qemu_arch in $(echo "${qemu_arches[@]}" | xargs -n1 | sort -uV | xargs); do
+				qemu_image="multiarch/qemu-user-static:x86_64-${qemu_arch}"
+
+				[ -f "${QEMU_DIR}/qemu-${qemu_arch}-static" ] \
+					&& echo "Importing: ${qemu_image}" \
+					&& echo "Status: Using existing file." \
+					&& continue
+
+				docker_container_contents "${qemu_image}" "${QEMU_DIR}/" '--strip-components=2'
+			done
+			echo
+		fi
+	else
+		echo "Not getting QEMU."
 	fi
 fi
 
@@ -49,7 +55,7 @@ if [ -n "${WHEEL_TAGS:-}" ] && [ -z "${NO_PULL_WHEELS}" ]; then
 			# We were using PYTHON_VERSION but this can cause conflicts with container
 			# ENV during the build, so now we're using BUILD_PYTHON_VERSION in build.conf
 			# Let one default to the other here, until all build.conf files are updated
-			import_image="${MUSL_WHEEL_REPO}:${wheel_tag}-py${BUILD_PYTHON_VERSION:-${PYTHON_VERSION}}-${!this_target_arch_tag}"
+			import_image="${WHEEL_REPO}:${wheel_tag}-py${BUILD_PYTHON_VERSION:-${PYTHON_VERSION}}-${!this_target_arch_tag}"
 			docker_container_contents "${import_image}" "${IMPORTS_DIR}/${!this_target_arch_tag}/"
 		done
 	done
