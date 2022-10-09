@@ -82,6 +82,7 @@ class ResettableTimer():
     """
 
     def __init__(self, delay, function):
+        """Initialize timing."""
         self.running = False
         self.delay = delay
         self.function = function
@@ -109,10 +110,11 @@ class ResettableTimer():
         self.start()
 
 
-class FileHandler():
+class RemoteHandler():
     """Handle getting/putting/cleaning of local and remote hosts files."""
 
     def __init__(self, temp_file, **kwargs):
+        """Initialize SSH client, temp file and timings then get remote hosts."""
         self.params = SimpleNamespace(**kwargs)
         self.logger = get_logger(self.__class__.__name__, self.params.log_level)
         self.temp_file = temp_file
@@ -276,11 +278,12 @@ class HostsHandler():
 
     block_start = '### dnsmasq updater start ###'
 
-    def __init__(self, file_handler, **kwargs):
+    def __init__(self, remote_handler, **kwargs):
+        """Initialize file handler and timing then populate from remote."""
         self.params = SimpleNamespace(**kwargs)
         self.logger = get_logger(self.__class__.__name__, self.params.log_level)
-        self.file_handler = file_handler
-        self.temp_file = file_handler.temp_file
+        self.remote_handler = remote_handler
+        self.temp_file = remote_handler.temp_file
         self.delayed_write = ResettableTimer(self.params.local_write_delay, self.write_hosts)
 
         self.get_remote_hosts()
@@ -290,7 +293,7 @@ class HostsHandler():
         self.hosts = Hosts(path='/dev/null')
         self.logger.debug('Cleaning remote hosts..')
 
-        for line in self.file_handler.hosts:
+        for line in self.remote_handler.hosts:
             if self.block_start in line:
                 break
 
@@ -327,6 +330,7 @@ class HostsHandler():
 
         for hostname in hostnames:
             host_ip = self.params.ip
+            host_list = set()
 
             if ': ' in hostname:
                 hostname, host_ip = hostname.split(': ', 1)
@@ -337,7 +341,12 @@ class HostsHandler():
                 pass
 
             if not self.hosts.exists(names=[hostname]):
-                hostname_dict[host_ip].update([hostname, hostname + '.' + self.params.domain])
+                host_list.update([hostname, hostname + '.' + self.params.domain])
+
+                if self.params.prepend_www and not re.search('^www', hostname):
+                    host_list.update(['www.' + hostname + '.' + self.params.domain])
+
+                hostname_dict[host_ip].update(host_list)
 
         return dict([key, sorted(value)] for key, value in hostname_dict.items())
 
@@ -396,7 +405,7 @@ class HostsHandler():
 
         self.hosts.write(path=self.temp_file.name)
         self.temp_file.seek(0)
-        self.file_handler.queue_put()
+        self.remote_handler.queue_put()
 
 
 class DockerHandler():
@@ -405,6 +414,7 @@ class DockerHandler():
     client = None
 
     def __init__(self, hosts_handler, **kwargs):
+        """Initialize variables, do nothing until run()."""
         self.params = SimpleNamespace(**kwargs)
         self.logger = get_logger(self.__class__.__name__, self.params.log_level)
         self.hosts_handler = hosts_handler
@@ -438,10 +448,10 @@ class DockerHandler():
         except KeyError:
             pass
 
+        pattern = re.compile(r'Host\(`([^`]*)`\)')
+
         for key, value in labels.items():
             if key.startswith('traefik.http.routers.'):
-                pattern = re.compile(r'Host\(`([^`]*)`\)')
-
                 for match in pattern.finditer(value):
                     hostnames.append(match.group(1))
 
@@ -581,10 +591,11 @@ class ConfigHandler():
     log_level = DEFAULT_LOG_LEVEL
 
     def __init__(self):
-        # setup default configuration
+        """Initialize default config, parse config file and command line args."""
         self.defaults = {
             'config_file': CONFIG_FILE,
             'domain': 'docker',
+            'prepend_www': False,
             'docker_socket': 'unix://var/run/docker.sock',
             'network': '',
             'server': '',
@@ -655,6 +666,8 @@ class ConfigHandler():
                 self.defaults.update(dict(config.items("local")))
                 self.defaults.update(dict(config.items("remote")))
                 self.defaults.update(dict(config.items("docker")))
+                self.defaults['prepend_www'] = config['dns'].getboolean('prepend_www')
+
                 self.logger.debug('Args from config file: %s', json.dumps(self.defaults, indent=4))
             else:
                 self.logger.error('Config file (%s) does not exist.',
@@ -674,10 +687,13 @@ class ConfigHandler():
             help='IP for the DNS record')
         parser.add_argument(
             '-d', '--domain', action='store', metavar='DOMAIN',
-            help='domain/zone for the DNS record (default \'%(default)s\')')
+            help='domain/zone for the DNS record (default: \'%(default)s\')')
+        parser.add_argument(
+            '-w', '--prepend_www', action='store_true',
+            help='add \'www\' subdomains to all hostnames')
         parser.add_argument(
             '-D', '--docker_socket', action='store', metavar='SOCKET',
-            help='path to the docker socket (default \'%(default)s\')')
+            help='path to the docker socket (default: \'%(default)s\')')
         parser.add_argument(
             '-n', '--network', action='store', metavar='NETWORK',
             help='Docker network to monitor')
@@ -686,7 +702,7 @@ class ConfigHandler():
             help='dnsmasq server address')
         parser.add_argument(
             '-P', '--port', action='store', metavar='PORT',
-            help='port for SSH on the dnsmasq server (default \'%(default)s\')')
+            help='port for SSH on the dnsmasq server (default: \'%(default)s\')')
         parser.add_argument(
             '-l', '--login', action='store', metavar='USERNAME',
             help='login name for the dnsmasq server')
@@ -704,13 +720,13 @@ class ConfigHandler():
             help='the update command to execute on the dnsmasq server')
         parser.add_argument(
             '-t', '--delay', action='store', metavar='SECONDS', type=int,
-            help='delay for writes to the dnsmasq server (default \'%(default)s\')')
+            help='delay for writes to the dnsmasq server (default: \'%(default)s\')')
         parser.add_argument(
             '--local_write_delay', action='store', type=int,
             help=argparse.SUPPRESS)
         parser.add_argument(
             '--ready_fd', action='store', metavar='INT',
-            help='set to an integer to enable signalling readiness by writing'
+            help='set to an integer to enable signalling readiness by writing '
             'a new line to that integer file descriptor')
         self.args = parser.parse_args()
 
@@ -770,8 +786,8 @@ def main():
     args = config.get_args()
 
     with tempfile.NamedTemporaryFile(delete=False) as temp_file:
-        file_handler = FileHandler(temp_file, **vars(args))
-        hosts_handler = HostsHandler(file_handler, **vars(args))
+        remote_handler = RemoteHandler(temp_file, **vars(args))
+        hosts_handler = HostsHandler(remote_handler, **vars(args))
         docker_handler = DockerHandler(hosts_handler, **vars(args))
 
         try:
@@ -780,7 +796,7 @@ def main():
             pass
         finally:
             hosts_handler.delayed_write.cancel()
-            file_handler.delayed_put.cancel()
+            remote_handler.delayed_put.cancel()
 
 
 if __name__ == '__main__':

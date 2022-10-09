@@ -1,7 +1,10 @@
+# syntax = docker/dockerfile:1.4.0
+
 ARG BUILD_PYTHON_VERSION="3.9"
 ARG FROM_IMAGE="moonbuggy2000/alpine-s6-python:${BUILD_PYTHON_VERSION}"
 
 ARG BUILDER_ROOT="/builder-root"
+
 
 ## build the virtual environment and prepare files
 #
@@ -76,6 +79,7 @@ RUN add-contenv \
 		PYTHONDONTWRITEBYTECODE="1" \
 		PYTHONUNBUFFERED="1" \
 	&& cp /etc/contenv_extra ./etc/
+
 
 ## build the final image
 #
