@@ -1,0 +1,17 @@
+#!/usr/bin/with-contenv /bin/sh
+#shellcheck shell=sh
+
+DEBUG_STRING=''
+
+# debug flag needs to be set by the command line rather than in the config
+# file as it's handled earlier. otherwise debug messaging won't start until
+# after the config file has been parsed
+if [ ! -z ${DMU_DEBUG+set} ]; then
+	case $(echo ${DMU_DEBUG} | tr '[:upper:]' '[:lower:]') in
+		on|true|yes|1)
+			DEBUG_STRING='--debug'
+			;;
+	esac
+fi
+
+${APP_PATH}/dnsmasq_updater -c ${APP_PATH}/conf/dnsmasq_updater.conf ${DEBUG_STRING}

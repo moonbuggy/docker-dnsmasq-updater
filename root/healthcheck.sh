@@ -1,7 +1,7 @@
 #!/bin/sh
 
-up="$(s6-svstat -o up /var/run/s6/services/dnsmasq-updater/)"
-ready="$(s6-svstat -o ready /var/run/s6/services/dnsmasq-updater/)"
+up="$(s6-svstat -o up /var/run/service/dnsmasq-updater/)"
+ready="$(s6-svstat -o ready /var/run/service/dnsmasq-updater/)"
 
 echo "Up: ${up}, Ready: ${ready}"
 

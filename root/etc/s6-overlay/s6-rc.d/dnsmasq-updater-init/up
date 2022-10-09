@@ -1,0 +1,2 @@
+with-contenv
+foreground { /etc/s6-overlay/s6-rc.d/dnsmasq-updater-init/init.sh }
