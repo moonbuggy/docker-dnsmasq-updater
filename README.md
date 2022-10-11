@@ -290,22 +290,6 @@ or running the container with `--security-opt seccomp=unconfined` set in the
 On a Debian-based host (e.g. Armbian) it may be necessary to add the backports
 repo for apt to find the newest version.
 
-#### String matching in removed hostnames
-The python_hosts module's `remove_all_matching()` is used to remove entries
-from the hosts table when containers go offline, but it will match substrings
-and potentially remove more hosts than might be expected.
-
-As an example, if you were developing a new version of a container whilst still
-running the old one, you might end up with one container with the hostname
-`myproject` and another with the hostname `myproject-dev`. As both `myproject`
-and `myproject.<domain>` are added to the hosts file when _that_ container comes
-up, the `myproject` string is matched when the container goes down to ensure
-they're both removed. This will, however, also remove `myproject-dev` and
-`myproject-dev.<domain>` from the hosts file regardless of whether it's still up
-or not.
-
-I expect this should be resolvable, but I haven't properly looked at it yet.
-
 ## Links
 GitHub: <https://github.com/moonbuggy/docker-dnsmasq-updater>
 

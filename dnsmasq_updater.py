@@ -29,6 +29,7 @@ from paramiko.ssh_exception import \
     SSHException, AuthenticationException, PasswordRequiredException
 import docker  # type: ignore
 
+
 # list possible configuration file locations in the order they should
 # be tried, use first match
 CONFIG_FILE = 'dnsmasq_updater.conf'
@@ -332,9 +333,11 @@ class HostsHandler():
             host_ip = self.params.ip
             host_list = set()
 
-            if ': ' in hostname:
-                hostname, host_ip = hostname.split(': ', 1)
+            # extra-hosts will include the IP, separated by a colon
+            if ':' in hostname:
+                hostname, host_ip = hostname.split(':', 1)
 
+            # strip the top level demain, if included
             try:
                 hostname = hostname[0:hostname.index('.' + self.params.domain)]
             except ValueError:
@@ -348,42 +351,47 @@ class HostsHandler():
 
                 hostname_dict[host_ip].update(host_list)
 
-        return dict([key, sorted(value)] for key, value in hostname_dict.items())
+        return dict([host_ip, sorted(hostnames)] for host_ip, hostnames in hostname_dict.items())
 
-    def add_hosts(self, hostnames, do_write=True):
+    def add_hosts(self, container_id, hostnames, do_write=True):
         """
-        Create host's HostsEntry, add it to Hosts object.
+        Create host's HostsEntry, add it to Hosts object. Optionally write out.
 
-        Optionally write out.
+        Setting the comment to a unique string (like a contaienr's 'short_id')
+        makes it easy to delete the correct hosts (and only the correct hosts)
+        across multiple IPs.
         """
         parsed_hostnames = self.parse_hostnames(hostnames)
         parsed_items = parsed_hostnames.items()
 
-        if parsed_items:
+        try:
             for host_ip, names in parsed_items:
-                self.logger.debug('Adding: (%s) %s', host_ip, names)
-                hostentry = HostsEntry(entry_type='ipv4', address=host_ip, names=names)
+                self.logger.debug('Adding: %s: %s', host_ip, ', '.join(names))
+                hostentry = HostsEntry(entry_type='ipv4', address=host_ip,
+                                       names=names, comment=container_id)
                 self.hosts.add([hostentry], force=True, allow_address_duplication=True)
 
             if do_write:
                 self.queue_write()
 
-            self.logger.info('Added host(s): %s', sum(parsed_hostnames.values(), []))
-        else:
+            self.logger.info('Added host(s): %s',
+                             ', '.join(sum(parsed_hostnames.values(), [])))
+
+        except ValueError:
             self.logger.info('Host already exists, nothing to add.')
 
         return parsed_items
 
-    def del_hosts(self, hostnames):
-        """Delete hostnames, optionally write out."""
-        self.logger.debug('Deleting hostnames: %s', hostnames)
-        for hostname in hostnames:
-            try:
-                hostname = hostname[0:hostname.index(': ')]
-            except ValueError:
-                pass
+    def del_hosts(self, comment):
+        """Delete hosts with matching comment."""
+        self.logger.info('Deleting hostnames: %s',
+                         ', '.join(sum([entry.names for entry in self.hosts.entries
+                                        if entry.comment == comment], [])))
 
-            self.hosts.remove_all_matching(name=hostname)
+        self.hosts.entries = list(
+            set(self.hosts.entries) - {entry for entry in self.hosts.entries
+                                       if entry.comment == comment}
+        )
 
         self.queue_write()
 
@@ -470,11 +478,11 @@ class DockerHandler():
             filters={"label": "dnsmasq.updater.enable", "status": "running"})
 
         for container in containers:
-            if container.labels['dnsmasq.updater.enable'].lower() not in ['true', 'yes', 'on', '1']:
+            if not bool(container.labels['dnsmasq.updater.enable']):
                 continue
             names = self.get_hostnames(container)
-            self.logger.info('Found %s: %s', container.name, names)
-            if self.hosts_handler.add_hosts(names, do_write=False):
+            self.logger.info('Found %s: %s', container.name, ', '.join(names))
+            if self.hosts_handler.add_hosts(container.short_id, names, do_write=False):
                 self.scan_success = True
 
         self.logger.info('Finished scanning running containers.')
@@ -492,8 +500,8 @@ class DockerHandler():
 
         for container in network.containers:
             names = self.get_hostnames(container)
-            self.logger.info('Found %s: %s', container.name, names)
-            if self.hosts_handler.add_hosts(names, do_write=False):
+            self.logger.info('Found %s: %s', container.name, ', '.join(names))
+            if self.hosts_handler.add_hosts(container.short_id, names, do_write=False):
                 self.scan_success = True
 
         self.logger.info('Finished scanning containers on \'%s\' network.', self.params.network)
@@ -516,9 +524,9 @@ class DockerHandler():
             names = self.get_hostnames(container)
 
             if event['status'] == 'start':
-                self.hosts_handler.add_hosts(names)
+                self.hosts_handler.add_hosts(container.short_id, names)
             elif event['status'] == 'stop':
-                self.hosts_handler.del_hosts(names)
+                self.hosts_handler.del_hosts(container.short_id)
 
         # trigger on network connect/disconnect
         elif (event['Type'] == 'network') and \
@@ -545,12 +553,10 @@ class DockerHandler():
 
                 names = self.get_hostnames(container)
 
-                self.logger.debug('Names: %s', names)
-
                 if event['Action'] == 'connect':
-                    self.hosts_handler.add_hosts(names)
+                    self.hosts_handler.add_hosts(container.short_id, names)
                 elif event['Action'] == 'disconnect':
-                    self.hosts_handler.del_hosts(names)
+                    self.hosts_handler.del_hosts(container.short_id)
 
     def run(self):
         """
