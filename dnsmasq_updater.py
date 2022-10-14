@@ -16,6 +16,7 @@ import json
 import socket
 import ipaddress
 import tempfile
+import time
 import re
 
 from threading import Timer
@@ -37,9 +38,19 @@ CONFIG_PATHS = [os.path.dirname(os.path.realpath(__file__)), '/etc/', '/conf/']
 
 DEFAULT_LOG_LEVEL = logging.INFO
 
+
+class Formatter(logging.Formatter):
+    """Format logger output."""
+
+    def formatTime(self, record, datefmt=None):
+        """Use system timezone and add milliseconds."""
+        datefmt = f'%Y-%m-%d %H:%M:%S.{round(record.msecs):03d} ' + time.strftime('%z')
+        return time.strftime(datefmt, self.converter(record.created))
+
+
 STDOUT_HANDLER = logging.StreamHandler(sys.stdout)
 STDOUT_HANDLER.setFormatter(
-    logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
+    Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
 
 
 def signal_handler(_sig, _frame):
@@ -50,7 +61,6 @@ def signal_handler(_sig, _frame):
 
 signal.signal(signal.SIGINT, signal_handler)
 
-# loggers = {}
 loggers: Dict[str, str] = {}
 
 
@@ -439,7 +449,7 @@ class DockerHandler():
         try:
             self.client = docker.DockerClient(base_url=self.params.docker_socket)
         except docker.errors.DockerException as err:
-            self.logger.error('Could not open Docker socker. Halting.')
+            self.logger.error('Could not open Docker socket. Halting.')
             self.logger.debug('Error: %s', err)
             sys.exit(1)
         else:
