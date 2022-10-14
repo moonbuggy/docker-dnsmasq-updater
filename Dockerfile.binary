@@ -1,7 +1,9 @@
-ARG ALPINE_VERSION="3.14"
+# syntax = docker/dockerfile:1.4.0
+
+ARG ALPINE_VERSION="3.15"
 ARG FROM_IMAGE="moonbuggy2000/alpine-s6:${ALPINE_VERSION}"
 
-ARG BUILD_PYTHON_VERSION="3.8"
+ARG BUILD_PYTHON_VERSION="3.9"
 ARG TARGET_OS="alpine"
 ARG TARGET_ARCH_TAG="amd64"
 
@@ -26,31 +28,26 @@ ARG IMPORTS_DIR=".imports"
 ARG TARGET_ARCH_TAG
 COPY _dummyfile "${IMPORTS_DIR}/${TARGET_ARCH_TAG}*" "/${IMPORTS_DIR}/"
 
-# install requirements
-# attempt to use pre-built binary wheels (from moonbuggy2000/python-musl-wheels)
-# but revert to building from source if it fails
-ARG RUST_REQUIRED="1.41.1"
-ENV LIBSODIUM_MAKE_ARGS="-j4"
-RUN RUST_VERSION="$(rustc --version | cut -d' ' -f2)" \
-	&& if [ "$(printf '%s\n' "${RUST_REQUIRED}" "${RUST_VERSION}" | sort -V | head -n1)" != "${RUST_REQUIRED}" ]; then \
-			echo "*** CRYPTOGRAPHY_DONT_BUILD_RUST ***"; export "CRYPTOGRAPHY_DONT_BUILD_RUST=1"; fi \
-	&& python3 -m pip install ${PIP_ARGS} --upgrade pip \
+RUN python3 -m pip install ${PIP_ARGS} --upgrade pip \
 	&& python3 -m pip install --only-binary=:all: --find-links "/${IMPORTS_DIR}/"  -r requirements.txt \
 		|| python3 -m pip install --find-links "/${IMPORTS_DIR}/" -r requirements.txt
 
 COPY ./dnsmasq_updater.py ./
-COPY ./dnsmasq_updater-nuitka-hints.json ./
 
-# hinted compilation with Nuitka
-ARG BUILD_PYTHON_VERSION
-RUN svn checkout https://github.com/Nuitka/NUITKA-Utilities/trunk/hinted-compilation . \
-	# patch hinted-mods.py \
-	&& sed -e 's|recurse_modules|follow_modules|' -i hinted-mods.py \
-	&& PYTHON_MINOR="$(echo "${BUILD_PYTHON_VERSION}" | grep -oE '^[0-9]+\.[0-9]+')" \
-	&& ln -s ./dnsmasq_updater-nuitka-hints.json "./dnsmasq_updater-${PYTHON_MINOR//.}-linux-64.json" \
-	&& ln -s ./dnsmasq_updater-nuitka-hints.json "./dnsmasq_updater-${PYTHON_MINOR//.}-linux-32.json"
+# # hinted compilation stopped working in newer Nutika verisons
+# COPY ./dnsmasq_updater-nuitka-hints.json ./
+# ARG BUILD_PYTHON_VERSION
+# RUN svn checkout https://github.com/Nuitka/NUITKA-Utilities/trunk/hinted-compilation . \
+# 	# patch hinted-mods.py \
+# 	&& sed -e 's|recurse_modules|follow_modules|' -i hinted-mods.py \
+# 	&& PYTHON_MINOR="$(echo "${BUILD_PYTHON_VERSION}" | grep -oE '^[0-9]+\.[0-9]+')" \
+# 	&& ln -s ./dnsmasq_updater-nuitka-hints.json "./dnsmasq_updater-${PYTHON_MINOR//.}-linux-64.json" \
+# 	&& ln -s ./dnsmasq_updater-nuitka-hints.json "./dnsmasq_updater-${PYTHON_MINOR//.}-linux-32.json"
+#
+# RUN python3 nuitka-hints.py --output-dir="${BUILDER_ROOT}${APP_PATH}" dnsmasq_updater.py
 
-RUN python3 nuitka-hints.py --output-dir="${BUILDER_ROOT}${APP_PATH}" dnsmasq_updater.py
+RUN python3 -m nuitka --standalone --show-progress \
+		--output-dir="${BUILDER_ROOT}${APP_PATH}" dnsmasq_updater.py
 
 RUN mkdir ./dnsmasq_updater.dist/keys \
 	&& mkdir ./dnsmasq_updater.dist/conf
