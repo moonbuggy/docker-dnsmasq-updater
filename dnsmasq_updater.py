@@ -706,7 +706,7 @@ class ConfigHandler():
             help='domain/zone for the DNS record (default: \'%(default)s\')')
         parser.add_argument(
             '-w', '--prepend_www', action='store_true',
-            help='add \'www\' subdomains to all hostnames')
+            help='add \'www\' subdomains for all hostnames')
         parser.add_argument(
             '-D', '--docker_socket', action='store', metavar='SOCKET',
             help='path to the docker socket (default: \'%(default)s\')')

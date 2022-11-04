@@ -28,8 +28,8 @@ standalone script on the Docker host or in a container, it only needs access to
 the Docker socket and SSH access to the router (or any device providing local
 DNS with a hosts file).
 
-This script has been built with an AsusWRT/Entware router in mind, but should
-work with any device running dnsmasq or using a hosts file.
+This script has been built with an [AsusWRT-Merlin][]/[Entware][] router in
+mind, but should work with any device running dnsmasq or using a hosts file.
 
 ## What It Does
 -   Runs on the Docker host OR in a container
@@ -46,9 +46,10 @@ working with a single host IP (with the exception of `extra_hosts`).
 
 ## Usage
 ```
-usage: dnsmasq_updater.py [-h] [-c FILE] [--debug] [-i IP] [-d DOMAIN] [-w] [-D SOCKET]
-                          [-n NETWORK] [-s SERVER] [-P PORT] [-l USERNAME] [-k FILE]
-                          [-p PASSWORD] [-f FILE] [-r COMMAND] [-t SECONDS] [--ready_fd INT]
+usage: dnsmasq_updater.py [-h] [-c FILE] [--debug] [-i IP] [-d DOMAIN] [-w]
+                          [-D SOCKET] [-n NETWORK] [-s SERVER] [-P PORT] [-l USERNAME]
+                          [-k FILE] [-p PASSWORD] [-f FILE] [-r COMMAND] [-t SECONDS]
+                          [--ready_fd INT]
 
 Docker Dnsmasq Updater
 
@@ -60,7 +61,7 @@ optional arguments:
   -i IP, --ip IP        IP for the DNS record
   -d DOMAIN, --domain DOMAIN
                         domain/zone for the DNS record (default: 'docker')
-  -w, --prepend_www     add 'www' subdomains to all hostnames
+  -w, --prepend_www     add 'www' subdomains for all hostnames
   -D SOCKET, --docker_socket SOCKET
                         path to the docker socket (default: 'unix://var/run/docker.sock')
   -n NETWORK, --network NETWORK
@@ -78,8 +79,8 @@ optional arguments:
                         the update command to execute on the dnsmasq server
   -t SECONDS, --delay SECONDS
                         delay for writes to the dnsmasq server (default: '10')
-  --ready_fd INT        set to an integer to enable signalling readiness by writing a new
-                        line to that integer file descriptor
+  --ready_fd INT        set to an integer to enable signalling readiness by writing
+                        a new line to that integer file descriptor
 ```
 
 Any command line parameters take precedence over settings in
@@ -96,9 +97,9 @@ remote hosts file will be updated _\<delay> seconds_ after the last change to
 the script's local copy of the hosts file. Set this to `0` to disable the delay.
 
 There's a hidden `--local_write_delay` argument, similar to `--delay`, which
-mediates the delay from a Docker event triggering a change to the local copy of
-the hosts file being written. This is useful during extremely rapid changes to
-the hosts configuration, primarily during Dnsmasq Updater's
+mediates the delay between a Docker event triggering a change and the script's
+local copy of the hosts file being written. This is useful during extremely
+rapid changes to the hosts configuration, primarily during Dnsmasq Updater's
 startup/initilazation as it actively scans for containers to populate an empty
 dataset. This defaults to `3` and can be disabled by `0`.
 
@@ -123,7 +124,10 @@ Put `dnsmasq_updater.conf` in `/etc/` or in the same directory as the script
 
 ### Installation of Docker container
 ```
-docker run -d --name dnsmasq-updater -v /var/run/docker.sock:/var/run/docker.sock moonbuggy2000/dnsmasq-updater
+docker run -d \
+  --name dnsmasq-updater \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  moonbuggy2000/dnsmasq-updater
 ```
 
 If you're using a config file instead of environment variables (see below)
@@ -152,8 +156,8 @@ more portable and less likely to have problems on un-tested architectures
 work on a particular piece of hardware, `script` would be worth trying.
 
 #### Docker environment variables
-Almost all the command line parameters (see Usage) can be set with enviornment
-variables:
+Almost all the command line parameters (see [Usage](#usage)) can be set with
+environment variables:
 
 *   `DMU_IP`          - IP for the DNS records
 *   `DMU_DOMAIN`      - domain/zone for the DNS records, defaults to `docker`
@@ -297,3 +301,7 @@ Docker Hub: <https://hub.docker.com/r/moonbuggy2000/dnsmasq-updater>
 
 ### Resources
 Pre-built Python musl wheels: <https://github.com/moonbuggy/docker-python-musl-wheels>
+
+
+[AsusWRT-Merlin]: https://www.asuswrt-merlin.net/
+[Entware]: https://entware.net/about.html
