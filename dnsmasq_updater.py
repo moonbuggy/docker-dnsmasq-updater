@@ -38,6 +38,11 @@ CONFIG_PATHS = [os.path.dirname(os.path.realpath(__file__)), '/etc/', '/conf/']
 
 DEFAULT_LOG_LEVEL = logging.INFO
 
+# these are mostly just to indicate hosts managed by this script in the case
+# where hosts are merged into an existing hosts file on the dnsmasq server
+BLOCK_START = '### docker dnsmasq updater start ###'
+BLOCK_END = '### docker dnsmasq updater end ###'
+
 
 class Formatter(logging.Formatter):
     """Format logger output."""
@@ -260,8 +265,9 @@ class RemoteHandler():
         self.logger.info('Writing remote hosts file: %s', self.params.file)
 
         with open(self.temp_file.name, 'r', encoding="utf-8") as temp_file:
+            hosts_block = BLOCK_START + '\n' + temp_file.read() + BLOCK_END
             exec_return = self.ssh.exec_command(
-                'echo -e "' + temp_file.read() + '" > ' + self.params.file)[1]
+                'echo -e "' + hosts_block + '" >' + self.params.file)[1]
             if exec_return.channel.recv_exit_status():
                 self.logger.error('Could not write remote file.')
 
@@ -287,8 +293,6 @@ class RemoteHandler():
 class HostsHandler():
     """Handle the Hosts object and the individual HostEntry objects."""
 
-    block_start = '### dnsmasq updater start ###'
-
     def __init__(self, remote_handler, **kwargs):
         """Initialize file handler and timing then populate from remote."""
         self.params = SimpleNamespace(**kwargs)
@@ -297,36 +301,63 @@ class HostsHandler():
         self.temp_file = remote_handler.temp_file
         self.delayed_write = ResettableTimer(self.params.local_write_delay, self.write_hosts)
 
-        self.get_remote_hosts()
-
-    def get_remote_hosts(self):
-        """Parse remote hosts file into python-hosts."""
         self.hosts = Hosts(path='/dev/null')
-        self.logger.debug('Cleaning remote hosts..')
 
-        for line in self.remote_handler.hosts:
-            if self.block_start in line:
-                break
+        # There's not really a good reason to import the existing hosts file
+        # during init since we don't import it again before writing, which loses
+        # any changes made by dnsmasq in the mean time.
+        #
+        # We're better off using an additional/external hosts file just for this
+        # script and feeding it to dnsmasq with the '-H' argument.
+        #
+        # This also avoids having to parse hosts and figure out which are managed
+        # here and which aren't.
 
-            line_type = HostsEntry.get_entry_type(line)
+        # self.get_remote_hosts()
 
-            if line_type in ['ipv4', 'ipv6']:
-                self.hosts.add([HostsEntry.str_to_hostentry(line)])
-            elif line_type == 'comment':
-                self.hosts.add([HostsEntry(entry_type='comment', comment=line)])
-            elif line_type == 'blank':
-                # python_hosts.Hosts.add doesn't seem to work for blank lines.
-                # We'll have to use the internal class methods directly.
-                self.hosts.entries.append(HostsEntry(entry_type="blank"))
-            else:
-                self.logger.warning('Unknown line type in hosts file: %s', line)
-
-        self.hosts.add([HostsEntry(entry_type='comment', comment=self.block_start)])
-
-        if self.params.log_level == logging.DEBUG:
-            self.logger.debug('Cleaned remote hosts: ')
-            for entry in self.hosts.entries:
-                print('    ', entry)
+    # def get_remote_hosts(self):
+    #     """
+    #     Parse remote hosts file into python-hosts.
+    #
+    #     This is not being used and can probably be removed, as per the comment
+    #     above. To keep it, we'd need to properly distinguish between hosts we
+    #     manage and hosts we don't. The BLOCK_START/END comment strings won't
+    #     necesarily keep their position in the Hosts class, so aren't useful as
+    #     delimiters if added as a HostEntry. We'd need to pull the remote hosts
+    #     file before each write and do some grep/sed/regex magic to parse and
+    #     insert delimiters then.
+    #     """
+    #     self.logger.debug('Cleaning remote hosts..')
+    #
+    #     for line in self.remote_handler.hosts:
+    #         if any(x in line for x in [BLOCK_START, BLOCK_END]):
+    #             continue
+    #
+    #         self.logger.debug('line: %s', line)
+    #
+    #         line_type = HostsEntry.get_entry_type(line)
+    #
+    #         self.logger.debug('line_type: %s', line_type)
+    #
+    #         if line_type in ['ipv4', 'ipv6']:
+    #             try:
+    #                 self.hosts.add([HostsEntry.str_to_hostentry(line)])
+    #             except AttributeError:
+    #                 self.logger.warning('Skipping unparseable line in hosts file: %s', line)
+    #         elif line_type == 'comment':
+    #             self.hosts.add([HostsEntry(entry_type='comment', comment=line)])
+    #         elif line_type == 'blank':
+    #             # python_hosts.Hosts.add doesn't seem to work for blank lines.
+    #             # We'll have to use the internal class methods directly.
+    #             self.logger.debug('blank line: %s', line)
+    #             self.hosts.entries.append(HostsEntry(entry_type="blank"))
+    #         else:
+    #             self.logger.warning('Skipping unknown line type in hosts file: %s', line)
+    #
+    #     if self.params.log_level == logging.DEBUG:
+    #         self.logger.debug('Cleaned remote hosts: ')
+    #         for entry in self.hosts.entries:
+    #             print('    ', entry)
 
     def parse_hostnames(self, hostnames):
         """

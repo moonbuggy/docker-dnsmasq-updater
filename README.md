@@ -38,7 +38,7 @@ mind, but should work with any device running dnsmasq or using a hosts file.
 -   After loading, monitors the Docker socket for containers starting/stopping
     and optionally connecting/disconnecting to a specified Docker network
 -   Finds any hostnames for containers meeting criteria
--   Updates a remote hosts file
+-   Writes a remote hosts file
 -   Restarts a remote dnsmasq server
 
 Currently the updater is built for a standalone Docker host, generally only
@@ -137,8 +137,8 @@ If you're using an SSH key for authentication you can persist and use the
 
 #### Tags
 To minimize the Docker image size, and to theoretically improve run times (I
-  haven't benchmarked it because I believe it runs fast enough either way), the
-  default build is binary, tagged as `latest` and `binary`.
+haven't benchmarked it because I believe it runs fast enough either way), the
+default build is binary, tagged as `latest` and `binary`.
 
 A build using the uncompiled Python script is available, tagged `script`.
 
@@ -175,13 +175,19 @@ environment variables:
 *   `TZ`		          - set timezone
 
 ### Setup on dnsmasq server
-If you have an external storage device attached to your router it makes sense to
-keep the hosts file the updater generates there, to minimize writes to the
+Docker Dnsmasq Updater won't track changes other software (i.e dnsmasq) might
+make to the remote hosts file. Thus, to avoid conflicts, it's best to give
+Docker Dnsmasq Updater it's own hosts file to use and either specify it as an
+additional hosts file to dnsmasq (with the `-addn-hosts <file>` argument or in
+`dnsmasq.conf`), or merge it into the main hosts file by some other mechanism.
+
+If your dnsmasq server is a router with external storage attached it makes sense
+to keep the hosts file the updater generates there, to minimize writes to the
 router's onboard storage.
 
-As an example, if you're using AsusWRT/Entware you can easily configure the
-router to include this external file by writing to `/opt/etc/hosts` and adding
-the following to `/jffs/scripts/hosts.postconf`:
+As an example, if you're using AsusWRT-Merlin/Entware, you can easily configure
+the router to include this external file by writing to `/opt/etc/hosts` and
+adding the following to `/jffs/scripts/hosts.postconf`:
 
 ```
 # for remote hosts updates
@@ -190,7 +196,7 @@ if [ -f /opt/etc/hosts ]; then
 fi
 ```
 
-As dnsmasq may start before `/opt` is mounted dnsmasq should be restarted in
+As dnsmasq may start before `/opt` is mounted, dnsmasq should be restarted in
 `/jffs/scripts/post-mount`, to ensure container name resolution functions after
 a router reboot:
 
@@ -206,7 +212,8 @@ Relevant configuration parameters for Docker Dnsmasq Updater in this scenario
 would be `--remote_file /opt/etc/hosts --remote_cmd 'service restart_dnsmasq'`.
 
 If you're using a key instead of a password you'll need to add the appropriate
-public key to `~/.ssh/authorized_keys` on the router.
+public key to `~/.ssh/authorized_keys` on the router (possibly via the router's
+webUI rather than the shell).
 
 ### Setup for other Docker containers
 To enable Docker Dnsmasq Updater for an individual container there are two
@@ -240,7 +247,7 @@ monitor a user-defined network that Traefik uses you don't need to set any
 Traefik labels.
 
 This scenario provides the easiest/laziest configuration route, with no specific
-Docker Dnsmasq Updater cofiguration required on containers.
+Docker Dnsmasq Updater configuration required on containers.
 
 #### Redirecting 'www' subdomains
 The `--prepend_www` funtionality was added primarily for robustness. Sometimes
