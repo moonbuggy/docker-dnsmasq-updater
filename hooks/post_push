@@ -4,6 +4,8 @@
 
 # push_platforms <target_tag> <base_tag>
 push_platforms () {
+	[ -n "${RATE_LIMITED+set}" ] && return
+
 	[ -n "${platforms:-}" ] || { echo "No platforms to push."; return 0; }
 
 	# remove duplicates
@@ -42,8 +44,10 @@ push_platforms () {
 	if [ -n "${error}" ]; then
 		case ${error} in
 			*toomanyrequests*)
-				echo 'rate limited, exiting.'
-				exit 1
+				printf 'rate limited!\n\nSkipping remaining post_push..\n'
+				RATE_LIMITED='true'
+				POST_PUSH_SKIPPED="${DOCKER_TAG}"
+				return
 				;;
 			*)
 				printf 'unknown error:\n%s\n' "${error}"
@@ -63,6 +67,9 @@ elif [ -n "${NO_MANIFEST+set}" ]; then
 	echo "NO_MANIFEST is set, skipping post_push."
 elif [ -n "${NO_POST_PUSH+set}" ]; then
 	echo "NO_POST_PUSH is set, skipping post_push."
+elif [ -n "${RATE_LIMITED+set}" ]; then
+	echo "skip in post_push"
+	POST_PUSH_SKIPPED="${POST_PUSH_SKIPPED} ${DOCKER_TAG}"
 else
 	manifest_tags=()
 
@@ -81,13 +88,6 @@ else
 #		echo 'No manifest tags to push.'
 		push_platforms
 	fi
-fi
-echo
-
-# push README.md
-if [ ! -z "${PUSH_README}" ] && [ -f "./README.md" ]; then
-	echo "Pushing README.md.."
-	docker pushrm "${DOCKER_REPO}" -f ./README.md
 fi
 
 ##	call any post_push_end() from build.conf

@@ -13,11 +13,6 @@ ARG BUILDER_ROOT="/builder_root"
 #
 FROM "moonbuggy2000/nuitka:py${BUILD_PYTHON_VERSION}-${TARGET_OS}-${TARGET_ARCH_TAG}" AS builder
 
-# QEMU static binaries from pre_build
-ARG QEMU_DIR=""
-ARG QEMU_ARCH=""
-COPY _dummyfile "${QEMU_DIR}/qemu-${QEMU_ARCH}-static*" /usr/bin/
-
 ARG APP_PATH="/app"
 WORKDIR "${APP_PATH}"
 
@@ -33,18 +28,6 @@ RUN python3 -m pip install ${PIP_ARGS} --upgrade pip \
 		|| python3 -m pip install --find-links "/${IMPORTS_DIR}/" -r requirements.txt
 
 COPY ./dnsmasq_updater.py ./
-
-# # hinted compilation stopped working in newer Nutika verisons
-# COPY ./dnsmasq_updater-nuitka-hints.json ./
-# ARG BUILD_PYTHON_VERSION
-# RUN svn checkout https://github.com/Nuitka/NUITKA-Utilities/trunk/hinted-compilation . \
-# 	# patch hinted-mods.py \
-# 	&& sed -e 's|recurse_modules|follow_modules|' -i hinted-mods.py \
-# 	&& PYTHON_MINOR="$(echo "${BUILD_PYTHON_VERSION}" | grep -oE '^[0-9]+\.[0-9]+')" \
-# 	&& ln -s ./dnsmasq_updater-nuitka-hints.json "./dnsmasq_updater-${PYTHON_MINOR//.}-linux-64.json" \
-# 	&& ln -s ./dnsmasq_updater-nuitka-hints.json "./dnsmasq_updater-${PYTHON_MINOR//.}-linux-32.json"
-#
-# RUN python3 nuitka-hints.py --output-dir="${BUILDER_ROOT}${APP_PATH}" dnsmasq_updater.py
 
 RUN python3 -m nuitka --standalone --show-progress \
 		--output-dir="${BUILDER_ROOT}${APP_PATH}" dnsmasq_updater.py

@@ -10,11 +10,6 @@ ARG BUILDER_ROOT="/builder-root"
 #
 FROM "${FROM_IMAGE}" AS builder
 
-# QEMU static binaries from pre_build
-ARG QEMU_DIR=""
-ARG QEMU_ARCH=""
-COPY _dummyfile "${QEMU_DIR}/qemu-${QEMU_ARCH}-static*" /usr/bin/
-
 ARG APP_PATH="/app"
 ARG BUILDER_ROOT
 WORKDIR "${BUILDER_ROOT}${APP_PATH}"

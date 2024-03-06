@@ -19,19 +19,14 @@ for arch in ${build_arches:-}; do
 
 	if [ -z "${SOURCE_IMAGE}" ]; then
 		true
-	elif [ ! -z "${BUILD_BUILDX}" ]; then
-		FROM_IMAGE="${SOURCE_IMAGE}"
 	elif [ -n "${SOURCE_ARCH_PREFIX}" ]; then
-		# [ -n "${QEMU_ARCH:-}" ] \
-		# 	&& FROM_IMAGE="${QEMU_PREFIX}/${SOURCE_IMAGE}" \
-		# 	|| FROM_IMAGE="${SOURCE_IMAGE}"
 		FROM_IMAGE="${QEMU_PREFIX}/${SOURCE_IMAGE}"
 	elif ifFunc get_from_image; then
 		FROM_IMAGE="$(get_from_image)"
 	elif [ -n "${SOURCE_ARCH_TAG}" ]; then
 		FROM_IMAGE="${SOURCE_IMAGE}-${SOURCE_ARCH_TAG}"
 	else
-		FROM_IMAGE="${SOURCE_IMAGE}-${TARGET_ARCH_TAG}"
+		FROM_IMAGE="${SOURCE_IMAGE}"
 	fi
 
 	print_param "${TARGET_TAG}" 'Target tag'
@@ -78,10 +73,8 @@ for arch in ${build_arches:-}; do
 
 	## prepare the build command
 	#
-
-	[ -z "${BUILD_BUILDX+set}" ] \
-		&& build_cmd=(docker build --rm) \
-		|| build_cmd=(docker buildx build --platform="${PLATFORM}" --progress="${BUILD_BUILDX_PROGRESS:-auto}" --load --rm)
+	# buildx is now the default
+	build_cmd=(docker buildx build --platform="${PLATFORM}" --progress="${BUILD_PROGRESS:-auto}" --load --rm)
 
 	[ ! -z "${BUILD_NO_CACHE+set}" ] && build_cmd+=('--no-cache')
 	[ -n "${BUILD_SQUASH}" ] && [ -z "${NO_BUILD_SQUASH+set}" ] \

@@ -7,7 +7,7 @@ echo '--- post_checkout ---'
 
 [ ! -d "${DATA_DIR}" ] && mkdir -p "${DATA_DIR}"
 
-cat "${ARCH_YAML}" > "${CONFIG_YAML}"
+cat "${ARCH_YAML}" > "${CONFIG_YAML}" || exit 0
 
 ## parse arch config
 #
@@ -100,7 +100,7 @@ else
 	#
 	if [ -n "${SOURCE_ARCHES:-}" ]; then
 		source_arches="${SOURCE_ARCHES}"
-	elif [ ! -z "${SOURCE_ARCH_PREFIX+set}" ] && [ -z "${BUILD_BUILDX}" ]; then
+	elif [ ! -z "${SOURCE_ARCH_PREFIX+set}" ]; then
 		unset source_arches
 		for arch in ${configured_arches}; do
 			arch_prefix_var="${arch}_QEMU_PREFIX"

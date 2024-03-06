@@ -142,6 +142,11 @@ default build is binary, tagged as `latest` and `binary`.
 
 A build using the uncompiled Python script is available, tagged `script`.
 
+> [!NOTE]
+> After upgrading the Nuitka version, binary builds are currently larger than
+> the the un-compiled images. I'm not sure it's worth the time and effort to
+> investigate what's changed. I may stop building the binary images.
+
 #### Architectures
 The main `latest`, `binary` and `script` tags should automatically provide
 images compatible with `amd64`, `arm`/`armv7`, `armhf`/`armv6`, `arm64`, `386`
