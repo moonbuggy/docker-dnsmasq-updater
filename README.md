@@ -162,11 +162,12 @@ provide images compatible with `amd64`, `arm`/`armv7`, `armhf`/`armv6`, `arm64`,
 available, in the form `alpine-<arch>` and `alpine-binary-<arch>` for the
 `script` and `binary` builds respectively.
 
-**Note:** I'm only able to test on `amd64` and `armv7`. Both `script` and
-`binary` builds currently work on these architectures. The `script` build is
-more portable and less likely to have problems on un-tested architectures
-(although the `binary` builds _should_ be fine as well). If `binary` doesn't
-work on a particular piece of hardware, `script` would be worth trying.
+> [!NOTE]
+> I'm only able to test on `amd64` and `armv7`. Both `script` and `binary` builds
+> currently work on these architectures. The `script` build is more portable and
+> less likely to have problems on un-tested architectures (although the `binary`
+> builds _should_ be fine as well). If `binary` doesn't work on a particular piece
+> of hardware, `script` would be worth trying.
 
 #### Docker environment variables
 Almost all the command line parameters (see [Usage](#usage)) can be set with
@@ -296,6 +297,31 @@ http:
 ```
 
 ## Known Issues
+#### Docker Swarm mode
+The script currently isn't capable of working sensibly in a Swarm. The initial
+Swarm-aware code in the script is more about "doesn't crash" than "works" and,
+although it will now run on a Swarm node, it can't see beyond that node.
+
+It would need to be running on every node in the swarm to catch every container,
+which is do-able but means you end up with many nodes all wanting to write to
+the same hosts file (creating conflicts and locking issues) or many hosts files
+that need to be collated by _dnsmasq_ (creating management overhead, if it's
+necessary to modify the _dnsmasq_ configuration to add new hosts files when
+nodes are added).
+
+The best option for proper Swarm functionality looks like it's going to be a
+master/agent sort of deal, with a single master in the swarm (or potentially on
+the hardware running _dnsmasq_) exposing an API and agents on each node that
+feed relevant local Docker socket activity to that API.
+
+This shouldn't be too hard to implement and, with a bit of luck, time and
+motivation will overlap and this will happen in the not too distant future.
+
+The tricky part is probably figuring out the IPs to use in this scenario, as
+some services will run through a load-balancer/frontend and will want to resolve
+to that IP and others will be exposed directly and want to resolve to the node's
+IP.
+
 #### pyinit_main: can't initialize time
 The container may fail to start on some ARM devices with this error:
 

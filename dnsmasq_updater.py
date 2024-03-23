@@ -468,6 +468,7 @@ class DockerHandler():
         self.logger = get_logger(self.__class__.__name__, self.params.log_level)
         self.hosts_handler = hosts_handler
         self.scan_success = False
+        self.swarm_mode = False
 
         if self.params.ready_fd == '':
             self.ready_fd = False
@@ -485,6 +486,9 @@ class DockerHandler():
             sys.exit(1)
         else:
             self.logger.info('Connected to Docker socket.')
+            if self.client.swarm.attrs:
+                self.swarm_mode = True
+                self.logger.info('Swarm mode detected.')
 
     @classmethod
     def get_hostnames(cls, container, get_extra_hosts=True):
@@ -515,21 +519,31 @@ class DockerHandler():
         """Scan running containers, find any with dnsmasq.updater.enable."""
         self.logger.info('Started scanning running containers.')
 
-        containers = self.client.containers.list(
-            filters={"label": "dnsmasq.updater.enable", "status": "running"})
+        if self.swarm_mode:
+            services = self.client.services.list(filters={"label": "dnsmasq.updater.enable"})
+            for service in services:
+                names = service.attrs['Spec']['Labels']['dnsmasq.updater.host'].split()
+                self.logger.info('Found %s: %s', service.name, ', '.join(names))
+                if self.hosts_handler.add_hosts(service.short_id, names, do_write=False):
+                    self.scan_success = True
 
-        for container in containers:
-            if not bool(container.labels['dnsmasq.updater.enable']):
-                continue
-            names = self.get_hostnames(container)
-            self.logger.info('Found %s: %s', container.name, ', '.join(names))
-            if self.hosts_handler.add_hosts(container.short_id, names, do_write=False):
-                self.scan_success = True
+        else:
+            containers = self.client.containers.list(
+                filters={"label": "dnsmasq.updater.enable", "status": "running"})
+            for container in containers:
+                names = self.get_hostnames(container)
+                self.logger.info('Found %s: %s', container.name, ', '.join(names))
+                if self.hosts_handler.add_hosts(container.short_id, names, do_write=False):
+                    self.scan_success = True
 
         self.logger.info('Finished scanning running containers.')
 
     def scan_network_containers(self):
         """Scan all containers on a specified network."""
+        if self.swarm_mode:
+            self.logger.info('Skipped network scan in swarm mode.')
+            return
+
         self.logger.info('Started scanning containers on \'%s\' network.', self.params.network)
 
         try:
@@ -547,57 +561,90 @@ class DockerHandler():
 
         self.logger.info('Finished scanning containers on \'%s\' network.', self.params.network)
 
-    def handle_event(self, event):
-        """Monitor the docker socket for events."""
-        # trigger on container start
-        if (event['Type'] == 'container') \
-            and (event['status'] in {'start', 'stop'}) \
-                and ('dnsmasq.updater.enable' in event['Actor']['Attributes']):
-
+    def handle_container_event(self, event):
+        """Handle a container event."""
+        if self.swarm_mode:
+            short_id = event['Actor']['Attributes']['com.docker.swarm.service.id'][:10]
+            service = self.client.services.get(short_id)
+            if 'dnsmasq.updater.enable' not in service.attrs['Spec']['Labels']:
+                self.logger.debug('dnsmasq.updater.enable not found for %s', service.name)
+                return
+            # container = self.client.containers.get(event['Actor']['ID'])
+            name = service.name
+            names = service.attrs['Spec']['Labels']['dnsmasq.updater.host'].split()
+        else:
+            if 'dnsmasq.updater.enable' not in event['Actor']['Attributes']:
+                return
             container = self.client.containers.get(event['Actor']['ID'])
-
-            if event['status'] == 'start':
-                event_verb = 'starting'
-            elif event['status'] == 'stop':
-                event_verb = 'stopping'
-
-            self.logger.info('Detected %s %s.', container.name, event_verb)
+            short_id = container.short_id
+            name = container.name
             names = self.get_hostnames(container)
 
-            if event['status'] == 'start':
-                self.hosts_handler.add_hosts(container.short_id, names)
-            elif event['status'] == 'stop':
-                self.hosts_handler.del_hosts(container.short_id)
+        if event['status'] == 'start':
+            event_verb = 'starting'
+        elif event['status'] == 'stop':
+            event_verb = 'stopping'
+
+        self.logger.info('Detected %s %s.', name, event_verb)
+
+        if event['status'] == 'start':
+            self.hosts_handler.add_hosts(short_id, names)
+        elif event['status'] == 'stop':
+            self.hosts_handler.del_hosts(short_id)
+
+    def handle_network_event(self, event):
+        """Handle a network event."""
+        try:
+            container = self.client.containers.get(event['Actor']['Attributes']['container'])
+        except docker.errors.NotFound:
+            self.logger.warning(
+                'Container %s not found.', event['Actor']['Attributes']['container'])
+            container = None
+
+        if container is not None:
+            network = event['Actor']['Attributes']['name']
+
+            if event['Action'] == 'connect':
+                event_verb = 'connecting to'
+            elif event['Action'] == 'disconnect':
+                event_verb = 'disconnecting from'
+
+            if self.swarm_mode:
+                short_id = container.labels['com.docker.swarm.service.id'][:10]
+                service = self.client.services.get(short_id)
+                name = service.name
+                names = service.attrs['Spec']['Labels']['dnsmasq.updater.host'].split()
+            else:
+                short_id = container.short_id
+                name = container.name
+                names = self.get_hostnames(container)
+
+            self.logger.info(
+                'Detected %s %s \'%s\' network.', name, event_verb, network)
+
+            if event['Action'] == 'connect':
+                self.hosts_handler.add_hosts(short_id, names)
+            elif event['Action'] == 'disconnect':
+                self.hosts_handler.del_hosts(short_id)
+
+    def handle_events(self, event):
+        """Monitor the docker socket for events."""
+        # if (event['Type'] == 'service'):
+        #     self.logger.debug('Service event: %s', event)
+        # elif (event['Type'] == 'container'):
+        #     self.logger.debug('Container event: %s', event)
+        # elif (event['Type'] == 'network'):
+        #     self.logger.debug('Network event: %s', event)
+
+        # trigger on container start/stop
+        if (event['Type'] == 'container') and (event['status'] in {'start', 'stop'}):
+            self.handle_container_event(event)
 
         # trigger on network connect/disconnect
         elif (event['Type'] == 'network') and \
             (self.params.network in event['Actor']['Attributes']['name']) \
                 and (event['Action'] in {'connect', 'disconnect'}):
-
-            try:
-                container = self.client.containers.get(event['Actor']['Attributes']['container'])
-            except docker.errors.NotFound:
-                self.logger.warning(
-                    'Container %s not found.', event['Actor']['Attributes']['container'])
-                container = None
-
-            if container is not None:
-                network = event['Actor']['Attributes']['name']
-
-                if event['Action'] == 'connect':
-                    event_verb = 'connecting to'
-                elif event['Action'] == 'disconnect':
-                    event_verb = 'disconnecting from'
-
-                self.logger.info(
-                    'Detected %s %s \'%s\' network.', container.name, event_verb, network)
-
-                names = self.get_hostnames(container)
-
-                if event['Action'] == 'connect':
-                    self.hosts_handler.add_hosts(container.short_id, names)
-                elif event['Action'] == 'disconnect':
-                    self.hosts_handler.del_hosts(container.short_id)
+            self.handle_network_event(event)
 
     def run(self):
         """
@@ -629,7 +676,7 @@ class DockerHandler():
 
         while True:
             for event in events:
-                self.handle_event(event)
+                self.handle_events(event)
 
 
 class ConfigHandler():
@@ -815,7 +862,7 @@ class ConfigHandler():
 
         if self.args.remote_cmd == '':
             self.logger.error('No remote command specified.')
-            self.logger.error(self.args.remote_cmd)
+#            self.logger.error(self.args.remote_cmd)
             sys.exit(1)
 
         if not isinstance(self.args.delay, int):

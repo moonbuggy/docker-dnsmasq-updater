@@ -9,6 +9,7 @@ ARG TARGET_ARCH_TAG="amd64"
 
 ARG BUILDER_ROOT="/builder_root"
 
+
 ## build the binary and prepare files
 #
 FROM "moonbuggy2000/nuitka:py${BUILD_PYTHON_VERSION}-${TARGET_OS}-${TARGET_ARCH_TAG}" AS builder
@@ -53,6 +54,7 @@ COPY ./dnsmasq_updater.conf ".${APP_PATH}/conf/"
 COPY ./root/ ./
 
 RUN echo "APP_PATH=${APP_PATH}" >> "${BUILDER_ROOT}/etc/contenv_extra"
+
 
 ## build the final image
 #
