@@ -34,7 +34,7 @@ COPY _dummyfile "${IMPORTS_DIR}/${TARGET_ARCH_TAG}*" "/${IMPORTS_DIR}/"
 ENV ORIGINAL_PATH="$PATH"
 ENV PATH="${BUILDER_ROOT}${VIRTUAL_ENV}/bin:$PATH"
 
-# First try and build from binary wheels (provided by moonbuggy2000/python-musl-wheels)
+# First try and build from binary wheels (provided by moonbuggy2000/python-alpine-wheels)
 # because it's quick and easy. Otherwise, install software and build from source.
 ARG SSL_LIBRARY="openssl"
 ARG RUST_REQUIRED="1.41.1"

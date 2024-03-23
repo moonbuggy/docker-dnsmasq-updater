@@ -1,12 +1,12 @@
 # Docker Dnsmasq Updater
-Automatically update a remote hosts file with Docker container hostnames
+Automatically update a remote hosts file with Docker container hostnames.
 
 *   [Rationale](#rationale)
 *   [What It Does](#what-it-does)
 *   [Usage](#usage)
 *   [Setup](#setup)
     *   [Installation on Docker host](#installation-on-docker-host)
-    *   [Installation of Docker container](#installation-of-docker-container)
+    *   [Installation in Docker container](#installation-in-docker-container)
     *   [Setup on dnsmasq server](#setup-on-dnsmasq-server)
     *   [Setup for other Docker containers](#setup-for-other-docker-containers)
     *   [Use with Traefik](#use-with-traefik)
@@ -100,7 +100,7 @@ There's a hidden `--local_write_delay` argument, similar to `--delay`, which
 mediates the delay between a Docker event triggering a change and the script's
 local copy of the hosts file being written. This is useful during extremely
 rapid changes to the hosts configuration, primarily during Dnsmasq Updater's
-startup/initilazation as it actively scans for containers to populate an empty
+startup/initialization as it actively scans for containers to populate an empty
 dataset. This defaults to `3` and can be disabled by `0`.
 
 ## Setup
@@ -122,8 +122,8 @@ Put `dnsmasq_updater.py` anywhere in the path.
 Put `dnsmasq_updater.conf` in `/etc/` or in the same directory as the script
 (which takes precedence over any config file in `/etc/`).
 
-### Installation of Docker container
-```
+### Installation in Docker container
+```sh
 docker run -d \
   --name dnsmasq-updater \
   -v /var/run/docker.sock:/var/run/docker.sock \
@@ -137,22 +137,30 @@ If you're using an SSH key for authentication you can persist and use the
 
 #### Tags
 To minimize the Docker image size, and to theoretically improve run times (I
-haven't benchmarked it because I believe it runs fast enough either way), the
-default build is binary, tagged as `latest` and `binary`.
+haven't benchmarked it because I believe it runs fast enough either way) a
+binary build is available, tagged as `binary`.
 
-A build using the uncompiled Python script is available, tagged `script`.
+A build using the un-compiled Python script is available, tagged `script`.
+
+The default `latest` tag points to the script version.
 
 > [!NOTE]
 > After upgrading the Nuitka version, binary builds are currently larger than
 > the the un-compiled images. I'm not sure it's worth the time and effort to
 > investigate what's changed. I may stop building the binary images.
+>
+> The 'latest' tag now points to the script instead of the binary, since it's
+> become the better option.
+
+Tags may be prefixed with `<version>-` to get a specific version, or just use a
+version number by itself to get `<version>-script`.
 
 #### Architectures
-The main `latest`, `binary` and `script` tags should automatically provide
-images compatible with `amd64`, `arm`/`armv7`, `armhf`/`armv6`, `arm64`, `386`
-and `ppc64le` platforms. Tags for specific single-arch images are available, in
-the form `alpine-<arch>` and `alpine-binary-<arch>` for the `script` and
-`binary` builds respectively.
+The main `latest`, `<version>`, `binary` and `script` tags should automatically
+provide images compatible with `amd64`, `arm`/`armv7`, `armhf`/`armv6`, `arm64`,
+`386` and `ppc64le` platforms. Tags for specific single-arch images are
+available, in the form `alpine-<arch>` and `alpine-binary-<arch>` for the
+`script` and `binary` builds respectively.
 
 **Note:** I'm only able to test on `amd64` and `armv7`. Both `script` and
 `binary` builds currently work on these architectures. The `script` build is
@@ -183,7 +191,7 @@ environment variables:
 Docker Dnsmasq Updater won't track changes other software (i.e dnsmasq) might
 make to the remote hosts file. Thus, to avoid conflicts, it's best to give
 Docker Dnsmasq Updater it's own hosts file to use and either specify it as an
-additional hosts file to dnsmasq (with the `-addn-hosts <file>` argument or in
+additional hosts file to dnsmasq (with the `-addn-hosts <file>` argument, or in
 `dnsmasq.conf`), or merge it into the main hosts file by some other mechanism.
 
 If your dnsmasq server is a router with external storage attached it makes sense
@@ -194,7 +202,7 @@ As an example, if you're using AsusWRT-Merlin/Entware, you can easily configure
 the router to include this external file by writing to `/opt/etc/hosts` and
 adding the following to `/jffs/scripts/hosts.postconf`:
 
-```
+```sh
 # for remote hosts updates
 if [ -f /opt/etc/hosts ]; then
   cat "/opt/etc/hosts" >> "$CONFIG"
@@ -205,7 +213,7 @@ As dnsmasq may start before `/opt` is mounted, dnsmasq should be restarted in
 `/jffs/scripts/post-mount`, to ensure container name resolution functions after
 a router reboot:
 
-```
+```sh
 if [ -d "$1/entware" ] ; then
   ln -nsf $1/entware /tmp/opt
 
@@ -265,7 +273,7 @@ redirect to the _non-www_ domain in a reverse proxy.
 
 In Traefik this can be done with a router and a middleware added to the dynamic
 configuration:
-```
+```yaml
 http:
   routers:
     redirect-www:
