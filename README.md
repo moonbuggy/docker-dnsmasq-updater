@@ -104,7 +104,7 @@ startup/initialization as it actively scans for containers to populate an empty
 dataset. This defaults to `3` and can be disabled by `0`.
 
 ## Setup
-Docker Dnsmasq Updater requires at least Python 3.6 and the docker, paramiko and
+Docker Dnsmasq Updater requires at least Python 3.10 and the docker, paramiko and
 python_hosts modules.
 
 The script can be run standalone on the Docker host or in a Docker container, so
@@ -173,20 +173,22 @@ available, in the form `alpine-<arch>` and `alpine-binary-<arch>` for the
 Almost all the command line parameters (see [Usage](#usage)) can be set with
 environment variables:
 
-*   `DMU_IP`          - IP for the DNS records
-*   `DMU_DOMAIN`      - domain/zone for the DNS records, defaults to `docker`
-*   `DMU_PREPEND_WWW` - add `www` subdomains to all hostnames, defaults to `False`
-*   `DMU_NETWORK`     - Docker network to monitor, defaults to none/disabled
-*   `DMU_SERVER`      - dnsmasq server address
-*   `DMU_PORT`        - dnsmasq server SSH port, defaults to `22`
-*   `DMU_LOGIN`       - dnsmasq server login name
-*   `DMU_PASSWORD`    - password for the login name or, if a key is specified, decryption of the key
-*   `DMU_KEY`         - full path to SSH key file
-*   `DMU_REMOTE_FILE` - full path to the hosts file to update on the dnsmasq server
-*   `DMU_REMOTE_CMD`  - remote command to execute to restart/update dnsmasq,defaults to `service restart_dnsmasq`
-*   `DMU_DELAY`       - delay in seconds before writing remote hosts file, defaults to `10`
-*   `DMU_DEBUG`       - set `True` to enable debug log output
-*   `TZ`		          - set timezone
+*   `DMU_MODE`           - operation mode (accepts: `standalone`, `manager` or `agent`, default: `standalone`)
+*   `DMU_HOSTS_LOCATION` - location of hosts file (accepts: `local`, `remote`, default: `remote`)
+*   `DMU_IP`             - IP for the DNS records
+*   `DMU_DOMAIN`         - domain/zone for the DNS records, defaults to `docker`
+*   `DMU_PREPEND_WWW`    - add `www` subdomains to all hostnames, defaults to `False`
+*   `DMU_NETWORK`        - Docker network to monitor, defaults to none/disabled
+*   `DMU_SERVER`         - dnsmasq server address
+*   `DMU_PORT`           - dnsmasq server SSH port, defaults to `22`
+*   `DMU_LOGIN`          - dnsmasq server login name
+*   `DMU_PASSWORD`       - password for the login name or, if a key is specified, decryption of the key
+*   `DMU_KEY`            - full path to SSH key file
+*   `DMU_HOSTS_FILE`     - full path to the hosts file to update on the dnsmasq server
+*   `DMU_RESTART_CMD`    - remote command to execute to restart/update dnsmasq,defaults to `service restart_dnsmasq`
+*   `DMU_DELAY`          - delay in seconds before writing remote hosts file, defaults to `10`
+*   `DMU_DEBUG`          - set `True` to enable debug log output
+*   `TZ`		             - set timezone
 
 ### Setup on dnsmasq server
 Docker Dnsmasq Updater won't track changes other software (i.e dnsmasq) might

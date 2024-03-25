@@ -1,6 +1,6 @@
 # syntax = docker/dockerfile:1.4.0
 
-ARG BUILD_PYTHON_VERSION="3.9"
+ARG BUILD_PYTHON_VERSION="3.11"
 ARG FROM_IMAGE="moonbuggy2000/alpine-s6-python:${BUILD_PYTHON_VERSION}"
 
 ARG BUILDER_ROOT="/builder-root"

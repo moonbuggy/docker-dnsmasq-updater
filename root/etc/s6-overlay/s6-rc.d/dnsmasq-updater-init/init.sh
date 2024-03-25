@@ -4,6 +4,9 @@
 CONFIG_FILE="${APP_PATH:-/app}/conf/dnsmasq_updater.conf"
 
 if env | grep -q 'DMU_'; then
+	[ ! -z "${DMU_MODE}" ] && sed "s!^mode.*!mode=${DMU_MODE}!" -i $CONFIG_FILE
+	[ ! -z "${DMU_HOSTS_LOCATION}" ] && sed "s!^location.*!location=${DMU_HOSTS_LOCATION}!" -i $CONFIG_FILE
+
 	[ ! -z "${DMU_IP}" ] && sed "s!^ip.*!ip=${DMU_IP}!" -i $CONFIG_FILE
 
 	[ ! -z "${DMU_DOMAIN}" ] \
@@ -25,12 +28,18 @@ if env | grep -q 'DMU_'; then
 	[ ! -z "${DMU_LOGIN}" ] && sed "s!^login.*!login=${DMU_LOGIN}!" -i $CONFIG_FILE
 	[ ! -z "${DMU_PASSWORD}" ] && sed "s!^password.*!password=${DMU_PASSWORD}!" -i $CONFIG_FILE
 	[ ! -z "${DMU_KEY}" ] && sed "s!^key.*!key=${DMU_KEY}!" -i $CONFIG_FILE
-	[ ! -z "${DMU_REMOTE_FILE}" ] && sed "s!^file.*!file=${DMU_REMOTE_FILE}!" -i $CONFIG_FILE
 
-	[ ! -z "${DMU_REMOTE_CMD}" ] \
-		&& { sed "s!^remote_cmd.*!remote_cmd=${DMU_REMOTE_CMD}!" -i $CONFIG_FILE; } \
-		|| sed "s!^remote_cmd.*!remote_cmd=service restart_dnsmasq!" -i $CONFIG_FILE
+	# some variables have been renamed, default to the old names if the new name
+	# is unset so we don't break existing containers
+set -x
+	DMU_HOSTS_FILE="${DMU_HOSTS_FILE:-${DMU_REMOTE_FILE}}"
+	[ ! -z "${DMU_HOSTS_FILE}" ] && sed "s!^file.*!file=${DMU_HOSTS_FILE}!" -i $CONFIG_FILE
 
+	DMU_RESTART_CMD="${DMU_RESTART_CMD:-${DMU_REMOTE_CMD}}"
+	[ ! -z "${DMU_RESTART_CMD}" ] \
+		&& { sed -E "s!^(restart_cmd|remote_cmd).*!restart_cmd=${DMU_RESTART_CMD}!" -i $CONFIG_FILE; } \
+		|| sed -E "s!^(restart_cmd|remote_cmd).*!restart_cmd=service restart_dnsmasq!" -i $CONFIG_FILE
+set +x
 	[ ! -z "${DMU_DELAY}" ] && sed "s!^delay.*!delay=${DMU_DELAY}!" -i $CONFIG_FILE
 
 	sed "s!^ready_fd.*!ready_fd=5!" -i $CONFIG_FILE
