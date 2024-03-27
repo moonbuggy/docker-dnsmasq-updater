@@ -19,17 +19,21 @@ import ipaddress
 import tempfile
 import time
 import re
+import urllib.request
 
 from threading import Timer
 from types import SimpleNamespace
 from collections import defaultdict
 from typing import Dict
 
-from python_hosts import Hosts, HostsEntry  # type: ignore
-from paramiko.client import SSHClient, AutoAddPolicy, RSAKey, DSSKey  # type: ignore
+from python_hosts import Hosts, HostsEntry  # type: ignore[import-untyped]
+from paramiko import RSAKey, DSSKey
+from paramiko.client import SSHClient, AutoAddPolicy
 from paramiko.ssh_exception import \
     SSHException, AuthenticationException, PasswordRequiredException
-import docker  # type: ignore
+import docker  # type: ignore[import-untyped]
+
+import bottle  # type: ignore[import-untyped, import-not-found]
 
 
 # list possible configuration file locations in the order they should
@@ -125,6 +129,16 @@ class ResettableTimer():
         """Reset timer."""
         self.cancel()
         self.start()
+
+
+class APIClientHandler():
+    """Handle sending data to the API."""
+
+    def __init__(self, temp_file, **kwargs):
+        """Initialize variables. Do nothing."""
+        self.params = SimpleNamespace(**kwargs)
+        self.temp_file = temp_file
+        self.logger = get_logger(self.__class__.__name__, self.params.log_level)
 
 
 class LocalHandler():
@@ -346,15 +360,42 @@ class RemoteHandler():
             self.logger.info('Executed remote command: %s', restart_cmd)
 
 
+class AgentHostsHandler():
+    """Feed hosts data directly to the API."""
+
+    def __init__(self, output_handler, **kwargs):
+        """Initialize."""
+        self.params = SimpleNamespace(**kwargs)
+        self.logger = get_logger(self.__class__.__name__, self.params.log_level)
+        self.output_handler = output_handler
+        # self.request = urllib3.request
+        self.api_host = 'http://APIHOST/'
+
+    def api_get(self, api_path):
+        """GET request to API."""
+        self.logger.debug('Opening URL: %s', self.api_host + api_path)
+        response = urllib.request.urlopen(self.api_host + api_path)
+        self.logger.debug('Response: %s', response)
+
+    def add_hosts(self, container_id, hostnames):
+        """Forward host information to API /add."""
+        for hostname in hostnames:
+            self.api_get('add/' + container_id + '/' + hostname)
+
+    def del_hosts(self, comment):
+        """Delete hosts with matching comment."""
+        self.api_get('del/' + comment)
+
+
 class HostsHandler():
     """Handle the Hosts object and the individual HostEntry objects."""
 
-    def __init__(self, dnsmasq_hander, **kwargs):
+    def __init__(self, output_handler, **kwargs):
         """Initialize file handler and timing then populate from remote."""
         self.params = SimpleNamespace(**kwargs)
         self.logger = get_logger(self.__class__.__name__, self.params.log_level)
-        self.dnsmasq_hander = dnsmasq_hander
-        self.temp_file = dnsmasq_hander.temp_file
+        self.output_handler = output_handler
+        self.temp_file = output_handler.temp_file
         self.delayed_write = ResettableTimer(self.params.local_write_delay, self.write_hosts)
 
         self.hosts = Hosts(path='/dev/null')
@@ -446,7 +487,7 @@ class HostsHandler():
         self.delayed_write.reset()
 
     def write_hosts(self):
-        """Write local hosts file, put it on the remote device."""
+        """Write local hosts file, send it to the output handler."""
         if self.params.log_level == logging.DEBUG:
             self.logger.debug('Writing local hosts temp file: %s', self.temp_file.name)
             for entry in self.hosts.entries:
@@ -454,7 +495,26 @@ class HostsHandler():
 
         self.hosts.write(path=self.temp_file.name)
         self.temp_file.seek(0)
-        self.dnsmasq_hander.queue_put()
+        self.output_handler.queue_put()
+
+
+class APIServerHandler():
+    """Start the API server."""
+
+    def __init__(self, hosts_handler, **kwargs):
+        """Initislize variables, start the API."""
+        self.params = SimpleNamespace(**kwargs)
+        self.logger = get_logger(self.__class__.__name__, self.params.log_level)
+        self.hosts_handler = hosts_handler
+
+    @bottle.route('/hello')
+    def hello(self):
+        """Say hello."""
+        return "Hello!"
+
+    def start_monitor(self):
+        """Run the API server."""
+        bottle.run(host='localhost', port=8080, debug=True)
 
 
 class DockerHandler():
@@ -463,7 +523,7 @@ class DockerHandler():
     client = None
 
     def __init__(self, hosts_handler, **kwargs):
-        """Initialize variables, do nothing until run()."""
+        """Initialize variables, do nothing until start_monitor()."""
         self.params = SimpleNamespace(**kwargs)
         self.logger = get_logger(self.__class__.__name__, self.params.log_level)
         self.hosts_handler = hosts_handler
@@ -646,7 +706,7 @@ class DockerHandler():
                 and (event['Action'] in {'connect', 'disconnect'}):
             self.handle_network_event(event)
 
-    def run(self):
+    def start_monitor(self):
         """
         Connect to Docker socket.
 
@@ -761,8 +821,8 @@ class ConfigHandler():
             if os.path.isfile(self.args.config_file):
                 config = configparser.ConfigParser()
                 config.read(self.args.config_file)
+                self.defaults.update(dict(config.items("general")))
                 self.defaults.update(dict(config.items("dns")))
-                # self.defaults.update(dict(config.items("local")))
                 self.defaults.update(dict(config.items("hosts")))
                 self.defaults.update(dict(config.items("docker")))
                 self.defaults['prepend_www'] = config['dns'].getboolean('prepend_www')
@@ -936,31 +996,33 @@ def main():
             case 'standalone' | 'manager':
                 if args.location == 'local':
                     print('LocalHandler\n')
-                    dnsmasq_hander = LocalHandler(temp_file, **vars(args))
+                    output_handler = LocalHandler(temp_file, **vars(args))
                 else:
                     print('RemoteHandler\n')
-                    dnsmasq_hander = RemoteHandler(temp_file, **vars(args))
+                    output_handler = RemoteHandler(temp_file, **vars(args))
+
+                hosts_handler = HostsHandler(output_handler, **vars(args))
+
             case 'agent':
                 print('APIClientHandler\n')
-                dnsmasq_hander = APIClientHandler(temp_file, **vars(args))
-
-        hosts_handler = HostsHandler(dnsmasq_hander, **vars(args))
+                output_handler = APIClientHandler(temp_file, **vars(args))
+                hosts_handler = AgentHostsHandler(output_handler, **vars(args))
 
         match args.mode:
             case 'standalone':
                 print('DockerHandler\n')
-                docker_handler = DockerHandler(hosts_handler, **vars(args))
+                data_handler = DockerHandler(hosts_handler, **vars(args))
             case 'manager':
                 print('APIServerHandler\n')
-                docker_handler = APIServerHandler(hosts_handler, **vars(args))
+                data_handler = APIServerHandler(hosts_handler, **vars(args))
 
         try:
-            docker_handler.run()
+            data_handler.start_monitor()
         except SystemExit:
             pass
         finally:
             hosts_handler.delayed_write.cancel()
-            dnsmasq_hander.delayed_put.cancel()
+            output_handler.delayed_put.cancel()
 
 
 if __name__ == '__main__':

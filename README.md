@@ -185,7 +185,7 @@ environment variables:
 *   `DMU_PASSWORD`       - password for the login name or, if a key is specified, decryption of the key
 *   `DMU_KEY`            - full path to SSH key file
 *   `DMU_HOSTS_FILE`     - full path to the hosts file to update on the dnsmasq server
-*   `DMU_RESTART_CMD`    - remote command to execute to restart/update dnsmasq,defaults to `service restart_dnsmasq`
+*   `DMU_RESTART_CMD`    - command to execute to restart/update dnsmasq, defaults to `service restart_dnsmasq`
 *   `DMU_DELAY`          - delay in seconds before writing remote hosts file, defaults to `10`
 *   `DMU_DEBUG`          - set `True` to enable debug log output
 *   `TZ`		             - set timezone
