@@ -14,7 +14,7 @@ Automatically update a remote hosts file with Docker container hostnames.
 *   [Links](#links)
 
 ## Rationale
-If you have a LAN with your router using dnsmasq for local DNS you may find
+If you have a LAN with your router using _dnsmasq_ for local DNS you may find
 yourself frequently updating a hosts file as you add or remove Docker
 containers. The currently available options for automating this typically
 require you to put Docker containers in a subdomain (e.g. \*.docker.local)
@@ -29,7 +29,7 @@ the Docker socket and SSH access to the router (or any device providing local
 DNS with a hosts file).
 
 This script has been built with an [AsusWRT-Merlin][]/[Entware][] router in
-mind, but should work with any device running dnsmasq or using a hosts file.
+mind, but should work with any device running _dnsmasq_ or using a hosts file.
 
 ## What It Does
 -   Runs on the Docker host OR in a container
@@ -39,7 +39,7 @@ mind, but should work with any device running dnsmasq or using a hosts file.
     and optionally connecting/disconnecting to a specified Docker network
 -   Finds any hostnames for containers meeting criteria
 -   Writes a remote hosts file
--   Restarts a remote dnsmasq server
+-   Restarts a remote _dnsmasq_ server
 
 Currently the updater is built for a standalone Docker host, generally only
 working with a single host IP (with the exception of `extra_hosts`).
@@ -104,8 +104,8 @@ startup/initialization as it actively scans for containers to populate an empty
 dataset. This defaults to `3` and can be disabled by `0`.
 
 ## Setup
-Docker Dnsmasq Updater requires at least Python 3.10 and the docker, paramiko and
-python_hosts modules.
+Docker Dnsmasq Updater requires at least Python 3.6 and the _bottle_,
+_bottlejwt_, _docker_, _paramiko_ and _python_hosts_ modules.
 
 The script can be run standalone on the Docker host or in a Docker container, so
 long as it has access to the Docker socket it's happy.
@@ -177,33 +177,33 @@ environment variables:
 *   `DMU_HOSTS_LOCATION` - location of hosts file (accepts: `local`, `remote`, default: `remote`)
 *   `DMU_IP`             - IP for the DNS records
 *   `DMU_DOMAIN`         - domain/zone for the DNS records, defaults to `docker`
-*   `DMU_PREPEND_WWW`    - add `www` subdomains to all hostnames, defaults to `False`
+*   `DMU_PREPEND_WWW`    - add _www_ subdomains to all hostnames, defaults to `False`
 *   `DMU_NETWORK`        - Docker network to monitor, defaults to none/disabled
-*   `DMU_SERVER`         - dnsmasq server address
-*   `DMU_PORT`           - dnsmasq server SSH port, defaults to `22`
-*   `DMU_LOGIN`          - dnsmasq server login name
+*   `DMU_SERVER`         - _dnsmasq_ server address
+*   `DMU_PORT`           - _dnsmasq_ server SSH port, defaults to `22`
+*   `DMU_LOGIN`          - _dnsmasq_ server login name
 *   `DMU_PASSWORD`       - password for the login name or, if a key is specified, decryption of the key
 *   `DMU_KEY`            - full path to SSH key file
-*   `DMU_HOSTS_FILE`     - full path to the hosts file to update on the dnsmasq server
+*   `DMU_HOSTS_FILE`     - full path to the hosts file to update on the _dnsmasq_ server
 *   `DMU_RESTART_CMD`    - command to execute to restart/update dnsmasq, defaults to `service restart_dnsmasq`
 *   `DMU_DELAY`          - delay in seconds before writing remote hosts file, defaults to `10`
 *   `DMU_DEBUG`          - set `True` to enable debug log output
 *   `TZ`		             - set timezone
 
 ### Setup on dnsmasq server
-Docker Dnsmasq Updater won't track changes other software (i.e dnsmasq) might
+Docker Dnsmasq Updater won't track changes other software (i.e _dnsmasq_) might
 make to the remote hosts file. Thus, to avoid conflicts, it's best to give
 Docker Dnsmasq Updater it's own hosts file to use and either specify it as an
-additional hosts file to dnsmasq (with the `-addn-hosts <file>` argument, or in
-`dnsmasq.conf`), or merge it into the main hosts file by some other mechanism.
+additional hosts file to _dnsmasq_ (with the `-addn-hosts <file>` argument, or in
+_dnsmasq.conf_), or merge it into the main hosts file by some other mechanism.
 
-If your dnsmasq server is a router with external storage attached it makes sense
+If your _dnsmasq_ server is a router with external storage attached it makes sense
 to keep the hosts file the updater generates there, to minimize writes to the
 router's onboard storage.
 
 As an example, if you're using AsusWRT-Merlin/Entware, you can easily configure
-the router to include this external file by writing to `/opt/etc/hosts` and
-adding the following to `/jffs/scripts/hosts.postconf`:
+the router to include this external file by writing to _/opt/etc/hosts_ and
+adding the following to _/jffs/scripts/hosts.postconf_:
 
 ```sh
 # for remote hosts updates
@@ -212,8 +212,8 @@ if [ -f /opt/etc/hosts ]; then
 fi
 ```
 
-As dnsmasq may start before `/opt` is mounted, dnsmasq should be restarted in
-`/jffs/scripts/post-mount`, to ensure container name resolution functions after
+As _dnsmasq_ may start before _/opt_ is mounted, _dnsmasq_ should be restarted in
+_/jffs/scripts/post-mount_, to ensure container name resolution functions after
 a router reboot:
 
 ```sh
@@ -228,7 +228,7 @@ Relevant configuration parameters for Docker Dnsmasq Updater in this scenario
 would be `--remote_file /opt/etc/hosts --remote_cmd 'service restart_dnsmasq'`.
 
 If you're using a key instead of a password you'll need to add the appropriate
-public key to `~/.ssh/authorized_keys` on the router (possibly via the router's
+public key to _~/.ssh/authorized_keys_ on the router (possibly via the router's
 webUI rather than the shell).
 
 ### Setup for other Docker containers

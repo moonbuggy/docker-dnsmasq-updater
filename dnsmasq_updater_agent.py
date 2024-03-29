@@ -24,8 +24,7 @@ from typing import Dict
 import docker  # type: ignore[import-untyped]
 
 
-# list possible configuration file locations in the order they should
-# be tried, use first match
+# config file and list of paths, in the order to try
 CONFIG_FILE = 'dnsmasq_updater_agent.conf'
 CONFIG_PATHS = [os.path.dirname(os.path.realpath(__file__)), '/etc/', '/conf/']
 
@@ -77,35 +76,78 @@ def get_logger(class_name, log_level):
 
 
 class APIClientHandler():
-    """Feed hosts data directly to the API."""
+    """
+    Feed hosts data directly to the API.
+
+    status with GET to <api_url>/status
+    add hosts with POST to <api_url>/add
+    delete hosts with DELETE to <api_url>/del/<container_id>
+    """
 
     def __init__(self, **kwargs):
         """Initialize."""
         self.params = SimpleNamespace(**kwargs)
         self.logger = get_logger(self.__class__.__name__, self.params.log_level)
-        self.api_host = 'http://' + self.params.server + ':' + self.params.port + '/'
+        self.api_url = 'http://' + self.params.server + ':' + self.params.port + '/'
 
-    def api_get(self, url_path):
-        """GET request to API."""
-        api_url = self.api_host + url_path
-        self.logger.debug('Opening URL: %s', api_url)
-
-        try:
-            response = urllib.request.urlopen(api_url)
-        except urllib.error.URLError as err:
-            self.logger.error('URLError: %s: %s', api_url, err.reason)
-        except ConnectionRefusedError as err:
-            self.logger.warning('ConnectionRefusedError: %s: %s', self.api_host, err)
-        else:
-            self.logger.debug('Response status: %s', response.status)
+        while True:
+            try:
+                with urllib.request.urlopen(self.api_url + 'status'):
+                    self.logger.info('API connection established.')
+                    break
+            except (urllib.error.URLError, ConnectionRefusedError):
+                self.logger.warning('Could not connect to API server. Retrying..')
+                time.sleep(5)
 
     def add_hosts(self, container_id, hostnames):
-        """Add hosts via API /add/."""
-        self.api_get('add/' + container_id + '/' + ','.join(hostnames))
+        """Add hosts via API /add."""
+        post_data = {'container_id': container_id, 'hostnames': hostnames}
 
-    def del_hosts(self, comment):
+        req = urllib.request.Request(
+            self.api_url + 'add',
+            json.dumps(post_data).encode(),
+            headers={"Content-Type": "application/json",
+                     'Authorization': self.params.api_key}
+        )
+
+        self.logger.debug('POST body: %s', json.dumps(post_data).encode())
+
+        try:
+            with urllib.request.urlopen(req) as resp:
+                if resp.getcode() == 200:
+                    self.logger.debug('Add successful (%s).', resp.status)
+                    return True
+
+                self.logger.error('Could not add hosts: %s: %s', container_id, resp.status)
+
+        except urllib.error.URLError as err:
+            self.logger.error('URLError: %s', err.reason)
+        except ConnectionRefusedError as err:
+            self.logger.warning('ConnectionRefusedError: %s', err)
+
+        return False
+
+    def del_hosts(self, short_id):
         """Delete hosts with matching comment via API /del/."""
-        self.api_get('del/' + comment)
+        req_url = self.api_url + 'del/' + short_id + 'break'
+        self.logger.debug('HTTP DELETE: %s', req_url)
+
+        req = urllib.request.Request(req_url, method='DELETE')
+
+        try:
+            with urllib.request.urlopen(req) as resp:
+                if resp.getcode() == 204:
+                    self.logger.debug('Delete successful (%s).', resp.status)
+                    return True
+
+                self.logger.error('Could not delete hosts: %s: %s', short_id, resp.status)
+
+        except urllib.error.URLError as err:
+            self.logger.error('URLError: %s: %s', req_url, err.reason)
+        except ConnectionRefusedError as err:
+            self.logger.warning('ConnectionRefusedError: %s: %s', self.api_url, err)
+
+        return False
 
 
 class DockerHandler():
@@ -309,8 +351,8 @@ class DockerHandler():
         if self.params.network:
             self.scan_network_containers()
 
-        if self.scan_success:
-            self.hosts_handler.queue_write()
+        # if self.scan_success:
+        #     self.hosts_handler.queue_write()
 
         if self.ready_fd:
             self.logger.info('Initialization done. Signalling readiness.')

@@ -26,24 +26,23 @@ from collections import defaultdict
 from typing import Dict
 
 from python_hosts import Hosts, HostsEntry  # type: ignore[import-untyped]
-from paramiko import RSAKey, DSSKey
 from paramiko.client import SSHClient, AutoAddPolicy
+from paramiko import RSAKey, DSSKey
 from paramiko.ssh_exception import \
     SSHException, AuthenticationException, PasswordRequiredException
 import docker  # type: ignore[import-untyped]
 
-from bottle import Bottle  # type: ignore[import-untyped, import-not-found]
+from bottlejwt import JwtPlugin  # type: ignore[import-untyped]
+from bottle import Bottle, request, HTTPResponse  # type: ignore[import-untyped, import-not-found]
 
 
-# list possible configuration file locations in the order they should
-# be tried, use first match
+# config file and list of paths, in the order to try
 CONFIG_FILE = 'dnsmasq_updater.conf'
 CONFIG_PATHS = [os.path.dirname(os.path.realpath(__file__)), '/etc/', '/conf/']
 
 DEFAULT_LOG_LEVEL = logging.INFO
 
-# these are mostly just to indicate hosts managed by this script in the case
-# where hosts are merged into an existing hosts file on the dnsmasq server
+# delimiter to surround block of entries in hosts file
 BLOCK_START = '### docker dnsmasq updater start ###'
 BLOCK_END = '### docker dnsmasq updater end ###'
 
@@ -460,38 +459,6 @@ class HostsHandler():
         self.output_handler.queue_put()
 
 
-class BottleAPI(Bottle):
-    """Extended bottle class to include routes."""
-
-    def __init__(self, hosts_handler, **kwargs):
-        """Configure routes."""
-        super().__init__()
-        self.params = SimpleNamespace(**kwargs)
-        self.logger = get_logger(self.__class__.__name__, self.params.log_level)
-        self.hosts_handler = hosts_handler
-
-        self.route('/hello', callback=self.hello)
-        self.route('/add/<short_id>/<hostnames>', callback=self.add_hosts)
-        self.route('/del/<short_id>', callback=self.del_host)
-
-    def hello(self):
-        """Say hello."""
-        return "Hello!"
-
-    def add_hosts(self, short_id, hostnames):
-        """Add a new hosts."""
-        names = hostnames.split(',')
-        self.logger.info('Adding %s.', ', '.join(names))
-        self.hosts_handler.add_hosts(short_id, names)
-        return "short_id: " + short_id + "\nhostname: " + ', '.join(names)
-
-    def del_host(self, short_id):
-        """Add a new hosts."""
-        self.logger.info('Removing id %s.', short_id)
-        self.hosts_handler.del_hosts(short_id)
-        return "short_id: " + short_id
-
-
 class APIServerHandler(Bottle):
     """Start the API server."""
 
@@ -507,24 +474,67 @@ class APIServerHandler(Bottle):
         else:
             self.ready_fd = int(self.params.ready_fd)
 
-        self.route('/hello', callback=self.hello)
-        self.route('/add/<short_id>/<hostnames>', callback=self.add_hosts)
-        self.route('/del/<short_id>', callback=self.del_host)
+        self.permissions = {"user": 0, "service": 1, "admin": 2}
 
-    def hello(self):
-        """Say hello."""
-        return "Hello!"
+        self.install(JwtPlugin(self.validation, self.params.api_key, algorithm="HS512"))
 
-    def add_hosts(self, short_id, hostnames):
+        self.route('/auth', callback=self.auth)
+        self.route('/jwt_info', callback=self.jwt_info)
+        self.route('/status', callback=self.status)
+        self.route('/add', callback=self.add_hosts, method='POST')
+        self.route('/del/<short_id>', callback=self.del_host, method='DELETE')
+
+    def validation(self, auth, auth_value):
+        """Validate auth."""
+        return self.permissions[auth["type"]] >= self.permissions[auth_value]
+
+    def auth(self):
+        """
+        Authenticate node.
+
+        receive: {'client_id': 'user', 'client_secret': 'password' }
+
+        response: {'access_token': 'token', 'type': 'bearer'}
+
+        # example for mongodb
+        user = db.users.find_one(
+            {
+                "client_id": request.json["client_id"],
+                "client_secret": hash_password(request.json["client_secret"]),
+            },
+            {"_id": False, "client_secret": False},
+        )
+        """
+        # Any data we consider good, implement a logic instead of doing this
+
+        user = {
+            "client_id": request.json["client_id"],
+            "type": "user"
+        }
+        if not user:
+            raise self.HTTPError(403, "Invalid user or password")
+        user["exp"] = time.time() + 86400  # 1 day
+        return {"access_token": JwtPlugin.encode(user), "type": "bearer"}
+
+    def jwt_info(self, auth='user'):
+        """JWT information."""
+        return auth
+
+    def status(self):
+        """Return API status, primarily to let clients know the API is up ."""
+        return "OK"
+
+    def add_hosts(self):
         """Add a new hosts."""
-        names = hostnames.split(',')
-        self.hosts_handler.add_hosts(short_id, names)
-        return "short_id: " + short_id + "\nhostname: " + ', '.join(names)
+        self.logger.debug('add_hosts: request: %s', request.json)
+        self.hosts_handler.add_hosts(
+            request.json['container_id'], request.json['hostnames'])
 
     def del_host(self, short_id):
         """Delete hosts."""
+        self.logger.debug('del_host: %s', short_id)
         self.hosts_handler.del_hosts(short_id)
-        return "short_id: " + short_id
+        return HTTPResponse(status=204)
 
     def start_monitor(self):
         """Run the API server."""
@@ -788,7 +798,7 @@ class ConfigHandler():
             'restart_cmd': '',
             'mode': 'standalone',
             'location': 'remote',
-            'api_port': '80',
+            'api_port': '8080',
             'api_key': '',
             'log_level': self.log_level,
             'delay': 10,
@@ -957,18 +967,16 @@ class ConfigHandler():
 
     def check_args(self):
         """Check we have all the information we need to run."""
-        # parameters required for DNS records
         if self.args.ip == '':
             self.logger.error('No host IP specified.')
             sys.exit(1)
-        else:
-            try:
-                ipaddress.ip_address(self.args.ip)
-            except ValueError:
-                self.logger.error('Specified host IP (%s) is invalid.', self.args.ip)
-                sys.exit(1)
 
-        # parameters for the hosts file
+        try:
+            ipaddress.ip_address(self.args.ip)
+        except ValueError:
+            self.logger.error('Specified host IP (%s) is invalid.', self.args.ip)
+            sys.exit(1)
+
         if self.args.file == '':
             self.logger.error('No hosts file specified.')
             sys.exit(1)
@@ -981,7 +989,7 @@ class ConfigHandler():
             self.logger.error('Specified delay (%s) is invalid.', self.args.delay)
             sys.exit(1)
 
-        # parameters required for a remote hosts file
+        # parameters only required for a remote hosts file
         if self.args.location == 'remote':
             if self.args.login == '':
                 self.logger.error('No login name specified.')
@@ -999,14 +1007,10 @@ class ConfigHandler():
                 self.logger.error('No remote server specified.')
                 sys.exit(1)
 
-        if self.args.mode == 'manager':
-            if self.args.api_port == '':
-                self.logger.error('No API port specified.')
-                sys.exit(1)
-
-            if self.args.api_key == '':
-                self.logger.error('No API key specified.')
-                sys.exit(1)
+        # parameters only required for manager mode
+        if self.args.mode == 'manager' and self.args.api_key == '':
+            self.logger.error('No API key specified.')
+            sys.exit(1)
 
     def get_args(self):
         """Return all config parameters."""
@@ -1020,19 +1024,15 @@ def main():
 
     with tempfile.NamedTemporaryFile(delete=False) as temp_file:
         if args.location == 'local':
-            print('LocalHandler\n')
             output_handler = LocalHandler(temp_file, **vars(args))
         else:
-            print('RemoteHandler\n')
             output_handler = RemoteHandler(temp_file, **vars(args))
 
         hosts_handler = HostsHandler(output_handler, **vars(args))
 
         if args.mode == 'manager':
-            print('APIServerHandler\n')
             ingress_handler = APIServerHandler(hosts_handler, **vars(args))
         else:
-            print('DockerHandler\n')
             ingress_handler = DockerHandler(hosts_handler, **vars(args))
 
         try:
