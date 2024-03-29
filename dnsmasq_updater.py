@@ -19,7 +19,6 @@ import ipaddress
 import tempfile
 import time
 import re
-import urllib.request
 
 from threading import Timer
 from types import SimpleNamespace
@@ -33,7 +32,7 @@ from paramiko.ssh_exception import \
     SSHException, AuthenticationException, PasswordRequiredException
 import docker  # type: ignore[import-untyped]
 
-import bottle  # type: ignore[import-untyped, import-not-found]
+from bottle import Bottle  # type: ignore[import-untyped, import-not-found]
 
 
 # list possible configuration file locations in the order they should
@@ -129,16 +128,6 @@ class ResettableTimer():
         """Reset timer."""
         self.cancel()
         self.start()
-
-
-class APIClientHandler():
-    """Handle sending data to the API."""
-
-    def __init__(self, temp_file, **kwargs):
-        """Initialize variables. Do nothing."""
-        self.params = SimpleNamespace(**kwargs)
-        self.temp_file = temp_file
-        self.logger = get_logger(self.__class__.__name__, self.params.log_level)
 
 
 class LocalHandler():
@@ -360,33 +349,6 @@ class RemoteHandler():
             self.logger.info('Executed remote command: %s', restart_cmd)
 
 
-class AgentHostsHandler():
-    """Feed hosts data directly to the API."""
-
-    def __init__(self, output_handler, **kwargs):
-        """Initialize."""
-        self.params = SimpleNamespace(**kwargs)
-        self.logger = get_logger(self.__class__.__name__, self.params.log_level)
-        self.output_handler = output_handler
-        # self.request = urllib3.request
-        self.api_host = 'http://APIHOST/'
-
-    def api_get(self, api_path):
-        """GET request to API."""
-        self.logger.debug('Opening URL: %s', self.api_host + api_path)
-        response = urllib.request.urlopen(self.api_host + api_path)
-        self.logger.debug('Response: %s', response)
-
-    def add_hosts(self, container_id, hostnames):
-        """Forward host information to API /add."""
-        for hostname in hostnames:
-            self.api_get('add/' + container_id + '/' + hostname)
-
-    def del_hosts(self, comment):
-        """Delete hosts with matching comment."""
-        self.api_get('del/' + comment)
-
-
 class HostsHandler():
     """Handle the Hosts object and the individual HostEntry objects."""
 
@@ -498,23 +460,88 @@ class HostsHandler():
         self.output_handler.queue_put()
 
 
-class APIServerHandler():
-    """Start the API server."""
+class BottleAPI(Bottle):
+    """Extended bottle class to include routes."""
 
     def __init__(self, hosts_handler, **kwargs):
-        """Initislize variables, start the API."""
+        """Configure routes."""
+        super().__init__()
         self.params = SimpleNamespace(**kwargs)
         self.logger = get_logger(self.__class__.__name__, self.params.log_level)
         self.hosts_handler = hosts_handler
 
-    @bottle.route('/hello')
+        self.route('/hello', callback=self.hello)
+        self.route('/add/<short_id>/<hostnames>', callback=self.add_hosts)
+        self.route('/del/<short_id>', callback=self.del_host)
+
     def hello(self):
         """Say hello."""
         return "Hello!"
 
+    def add_hosts(self, short_id, hostnames):
+        """Add a new hosts."""
+        names = hostnames.split(',')
+        self.logger.info('Adding %s.', ', '.join(names))
+        self.hosts_handler.add_hosts(short_id, names)
+        return "short_id: " + short_id + "\nhostname: " + ', '.join(names)
+
+    def del_host(self, short_id):
+        """Add a new hosts."""
+        self.logger.info('Removing id %s.', short_id)
+        self.hosts_handler.del_hosts(short_id)
+        return "short_id: " + short_id
+
+
+class APIServerHandler(Bottle):
+    """Start the API server."""
+
+    def __init__(self, hosts_handler, **kwargs):
+        """Initislize variables and configure routes."""
+        super().__init__()
+        self.params = SimpleNamespace(**kwargs)
+        self.logger = get_logger(self.__class__.__name__, self.params.log_level)
+        self.hosts_handler = hosts_handler
+
+        if self.params.ready_fd == '':
+            self.ready_fd = False
+        else:
+            self.ready_fd = int(self.params.ready_fd)
+
+        self.route('/hello', callback=self.hello)
+        self.route('/add/<short_id>/<hostnames>', callback=self.add_hosts)
+        self.route('/del/<short_id>', callback=self.del_host)
+
+    def hello(self):
+        """Say hello."""
+        return "Hello!"
+
+    def add_hosts(self, short_id, hostnames):
+        """Add a new hosts."""
+        names = hostnames.split(',')
+        self.hosts_handler.add_hosts(short_id, names)
+        return "short_id: " + short_id + "\nhostname: " + ', '.join(names)
+
+    def del_host(self, short_id):
+        """Delete hosts."""
+        self.hosts_handler.del_hosts(short_id)
+        return "short_id: " + short_id
+
     def start_monitor(self):
         """Run the API server."""
-        bottle.run(host='localhost', port=8080, debug=True)
+        if self.ready_fd:
+            self.logger.info('Initialization done. Signalling readiness.')
+            self.logger.debug(
+                'Readiness signal writing to file descriptor %s.', self.ready_fd)
+            try:
+                os.write(self.ready_fd, '\n'.encode())
+            except OSError:
+                self.logger.warning('Could not signal file descriptor \'%s\'.', self.ready_fd)
+        else:
+            self.logger.info('Initialization done.')
+
+        self.run(host='0.0.0.0', port=self.params.api_port, debug=self.params.debug)
+
+        self.logger.debug('Bottle started.')
 
 
 class DockerHandler():
@@ -761,6 +788,7 @@ class ConfigHandler():
             'restart_cmd': '',
             'mode': 'standalone',
             'location': 'remote',
+            'api_port': '80',
             'api_key': '',
             'log_level': self.log_level,
             'delay': 10,
@@ -772,8 +800,6 @@ class ConfigHandler():
         self.config_parser = argparse.ArgumentParser(
             formatter_class=argparse.RawDescriptionHelpFormatter,
             description=__doc__, add_help=False)
-
-        # self.general_group = self.config_parser.add_argument_group(title='General options')
 
         self.parse_initial_config()
         self.parse_config_file()
@@ -826,6 +852,7 @@ class ConfigHandler():
                 self.defaults.update(dict(config.items("hosts")))
                 self.defaults.update(dict(config.items("docker")))
                 self.defaults['prepend_www'] = config['dns'].getboolean('prepend_www')
+                self.defaults.update(dict(config.items("api")))
 
                 self.logger.debug('Args from config file: %s', json.dumps(self.defaults, indent=4))
             else:
@@ -842,21 +869,15 @@ class ConfigHandler():
             description='Docker Dnsmasq Updater', parents=[self.config_parser])
         parser.set_defaults(**self.defaults)
 
-        mode_group = parser.add_argument_group(
-            title='Mode')
-#            description='Select a mode to determine fundamental behaviour.')
-        docker_group = parser.add_argument_group(title='Docker')
-        dns_group = parser.add_argument_group(title='DNS')
-        hosts_group = parser.add_argument_group(
-            title='hosts file')
-#            description='used with both local and remote hosts files')
-        remote_hosts_group = parser.add_argument_group(
-            title='Remote hosts file (needed by --remote)')
-#            description='needed by --remote')
-        # local_hosts_group = parser.add_argument_group(
-        #     title='Local hosts file options',
-        #     description='only used with a local hosts file')
+        parser.add_argument(
+            '--local_write_delay', action='store', type=int,
+            help=argparse.SUPPRESS)
+        parser.add_argument(
+            '--ready_fd', action='store', metavar='INT',
+            help='set to an integer to enable signalling readiness by writing '
+            'a new line to that integer file descriptor')
 
+        mode_group = parser.add_argument_group(title='Mode')
         mode = mode_group.add_mutually_exclusive_group()
         mode.add_argument(
             '--standalone', action='store_const', dest='mode', const='standalone',
@@ -864,22 +885,17 @@ class ConfigHandler():
         mode.add_argument(
             '--manager', action='store_const', dest='mode', const='manager',
             help='running as the manager for multiple Docker nodes, brings up \
-                the API interface and writes to a remote hosts file')
-        mode.add_argument(
-            '--agent', action='store_const', dest='mode', const='agent',
-            help='running on a Docker node, sends data to a local or manager \
-                instance via the API interface')
+                the API')
 
-        location_group = hosts_group.add_mutually_exclusive_group()
-        location_group.add_argument(
-            '--remote', action='store_const', dest='location', const='remote',
-            help='write to a remote hosts file, via SSH (default)')
-        location_group.add_argument(
-            '--local', action='store_const', dest='location', const='local',
-            help='write to a local hosts file')
+        docker_group = parser.add_argument_group(title='Docker')
+        docker_group.add_argument(
+            '-D', '--docker_socket', action='store', metavar='SOCKET',
+            help='path to the docker socket (default: \'%(default)s\')')
+        docker_group.add_argument(
+            '-n', '--network', action='store', metavar='NETWORK',
+            help='Docker network to monitor')
 
-        # general_group = parser.add_argument_group(title='General options')
-
+        dns_group = parser.add_argument_group(title='DNS')
         dns_group.add_argument(
             '-i', '--ip', action='store', metavar='IP',
             help='IP for the DNS record')
@@ -889,12 +905,27 @@ class ConfigHandler():
         dns_group.add_argument(
             '-w', '--prepend_www', action='store_true',
             help='add \'www\' subdomains for all hostnames')
-        docker_group.add_argument(
-            '-D', '--docker_socket', action='store', metavar='SOCKET',
-            help='path to the docker socket (default: \'%(default)s\')')
-        docker_group.add_argument(
-            '-n', '--network', action='store', metavar='NETWORK',
-            help='Docker network to monitor')
+
+        hosts_group = parser.add_argument_group(title='hosts file')
+        location_group = hosts_group.add_mutually_exclusive_group()
+        location_group.add_argument(
+            '--remote', action='store_const', dest='location', const='remote',
+            help='write to a remote hosts file, via SSH (default)')
+        location_group.add_argument(
+            '--local', action='store_const', dest='location', const='local',
+            help='write to a local hosts file')
+        hosts_group.add_argument(
+            '-f', '--file', action='store', metavar='FILE',
+            help='the hosts file (including path) to write')
+        hosts_group.add_argument(
+            '-r', '--restart_cmd', action='store', metavar='COMMAND',
+            help='the dnsmasq restart command to execute')
+        hosts_group.add_argument(
+            '-t', '--delay', action='store', metavar='SECONDS', type=int,
+            help='delay for writes to the hosts file (default: \'%(default)s\')')
+
+        remote_hosts_group = parser.add_argument_group(
+            title='Remote hosts file (needed by --remote)')
         remote_hosts_group.add_argument(
             '-s', '--server', action='store', metavar='SERVER',
             help='dnsmasq server address')
@@ -910,26 +941,14 @@ class ConfigHandler():
         remote_hosts_group.add_argument(
             '-p', '--password', action='store', metavar='PASSWORD',
             help='password for the dnsmasq server OR for an encrypted SSH key')
-        hosts_group.add_argument(
-            '-f', '--file', action='store', metavar='FILE',
-            help='the hosts file (including path) to write')
-        hosts_group.add_argument(
-            '-r', '--restart_cmd', action='store', metavar='COMMAND',
-            help='the dnsmasq restart command to execute')
-        hosts_group.add_argument(
-            '-t', '--delay', action='store', metavar='SECONDS', type=int,
-            help='delay for writes to the hosts file (default: \'%(default)s\')')
-        parser.add_argument(
-            '--local_write_delay', action='store', type=int,
-            help=argparse.SUPPRESS)
-        parser.add_argument(
-            '--ready_fd', action='store', metavar='INT',
-            help='set to an integer to enable signalling readiness by writing '
-            'a new line to that integer file descriptor')
 
-        # local_hosts_group.add_argument(
-        #     '-f', '--file', action='store', metavar='FILE',
-        #     help='the file (including path) to write on the local device')
+        api_group = parser.add_argument_group(
+            title='API server (needed by --manager)')
+        api_group.add_argument(
+            '--api_port', action='store', metavar='PORT',
+            help='port for API to listen on (default: \'%(default)s\')')
+        api_group.add_argument(
+            '--api_key', action='store', metavar='KEY', help='API access key')
 
         self.args = parser.parse_args()
 
@@ -963,7 +982,7 @@ class ConfigHandler():
             sys.exit(1)
 
         # parameters required for a remote hosts file
-        if self.args.location in ('remote'):
+        if self.args.location == 'remote':
             if self.args.login == '':
                 self.logger.error('No login name specified.')
                 sys.exit(1)
@@ -972,13 +991,21 @@ class ConfigHandler():
                 if self.args.password == '':
                     self.logger.error('No password or key specified.')
                     sys.exit(1)
-            else:
-                if not os.path.exists(self.args.key):
-                    self.logger.error('Key file (%s) does not exist.', self.args.key)
-                    sys.exit(1)
+            elif not os.path.exists(self.args.key):
+                self.logger.error('Key file (%s) does not exist.', self.args.key)
+                sys.exit(1)
 
             if self.args.server == '':
                 self.logger.error('No remote server specified.')
+                sys.exit(1)
+
+        if self.args.mode == 'manager':
+            if self.args.api_port == '':
+                self.logger.error('No API port specified.')
+                sys.exit(1)
+
+            if self.args.api_key == '':
+                self.logger.error('No API key specified.')
                 sys.exit(1)
 
     def get_args(self):
@@ -992,32 +1019,24 @@ def main():
     args = config.get_args()
 
     with tempfile.NamedTemporaryFile(delete=False) as temp_file:
-        match args.mode:
-            case 'standalone' | 'manager':
-                if args.location == 'local':
-                    print('LocalHandler\n')
-                    output_handler = LocalHandler(temp_file, **vars(args))
-                else:
-                    print('RemoteHandler\n')
-                    output_handler = RemoteHandler(temp_file, **vars(args))
+        if args.location == 'local':
+            print('LocalHandler\n')
+            output_handler = LocalHandler(temp_file, **vars(args))
+        else:
+            print('RemoteHandler\n')
+            output_handler = RemoteHandler(temp_file, **vars(args))
 
-                hosts_handler = HostsHandler(output_handler, **vars(args))
+        hosts_handler = HostsHandler(output_handler, **vars(args))
 
-            case 'agent':
-                print('APIClientHandler\n')
-                output_handler = APIClientHandler(temp_file, **vars(args))
-                hosts_handler = AgentHostsHandler(output_handler, **vars(args))
-
-        match args.mode:
-            case 'standalone':
-                print('DockerHandler\n')
-                data_handler = DockerHandler(hosts_handler, **vars(args))
-            case 'manager':
-                print('APIServerHandler\n')
-                data_handler = APIServerHandler(hosts_handler, **vars(args))
+        if args.mode == 'manager':
+            print('APIServerHandler\n')
+            ingress_handler = APIServerHandler(hosts_handler, **vars(args))
+        else:
+            print('DockerHandler\n')
+            ingress_handler = DockerHandler(hosts_handler, **vars(args))
 
         try:
-            data_handler.start_monitor()
+            ingress_handler.start_monitor()
         except SystemExit:
             pass
         finally:
