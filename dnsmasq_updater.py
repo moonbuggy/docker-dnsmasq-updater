@@ -34,7 +34,8 @@ import docker  # type: ignore[import-untyped]
 
 from bottlejwt import JwtPlugin  # type: ignore[import-untyped]
 from bottle import Bottle, request, HTTPResponse  # type: ignore[import-untyped, import-not-found]
-
+from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
+import cryptography.exceptions
 
 # config file and list of paths, in the order to try
 CONFIG_FILE = 'dnsmasq_updater.conf'
@@ -396,7 +397,7 @@ class HostsHandler():
 
         return dict([host_ip, sorted(hostnames)] for host_ip, hostnames in hostname_dict.items())
 
-    def add_hosts(self, container_id, hostnames, do_write=True):
+    def add_hosts(self, short_id, hostnames, do_write=True):
         """
         Create host's HostsEntry, add it to Hosts object. Optionally write out.
 
@@ -407,36 +408,43 @@ class HostsHandler():
         parsed_hostnames = self.parse_hostnames(hostnames)
         parsed_items = parsed_hostnames.items()
 
-        try:
-            for host_ip, names in parsed_items:
-                self.logger.debug('Adding: %s: %s', host_ip, ', '.join(names))
-                hostentry = HostsEntry(entry_type='ipv4', address=host_ip,
-                                       names=names, comment=container_id)
-                self.hosts.add([hostentry], force=True, allow_address_duplication=True)
+        if not parsed_items:
+            self.logger.debug('Added host(s): no hostnames to add: %s', short_id)
+        else:
+            try:
+                for host_ip, names in parsed_items:
+                    self.logger.debug('Adding: %s: %s', host_ip, ', '.join(names))
+                    hostentry = HostsEntry(entry_type='ipv4', address=host_ip,
+                                           names=names, comment=short_id)
+                    self.hosts.add([hostentry], force=True, allow_address_duplication=True)
 
-            if do_write:
-                self.queue_write()
+                if do_write:
+                    self.queue_write()
 
-            self.logger.info('Added host(s): %s',
-                             ', '.join(sum(parsed_hostnames.values(), [])))
+                self.logger.info('Added host(s): %s',
+                                 ', '.join(sum(parsed_hostnames.values(), [])))
 
-        except ValueError:
-            self.logger.info('Host already exists, nothing to add.')
+            except ValueError:
+                self.logger.info('Host already exists, nothing to add.')
 
         return parsed_items
 
     def del_hosts(self, comment):
         """Delete hosts with matching comment."""
-        self.logger.info('Deleting hostnames: %s',
-                         ', '.join(sum([entry.names for entry in self.hosts.entries
-                                        if entry.comment == comment], [])))
+        hostnames = sum([entry.names for entry in self.hosts.entries
+                         if entry.comment == comment], [])
 
-        self.hosts.entries = list(
-            set(self.hosts.entries) - {entry for entry in self.hosts.entries
-                                       if entry.comment == comment}
-        )
+        if not hostnames:
+            self.logger.debug(
+                'Deleting host(s): no hostnames to delete: %s', comment)
+        else:
+            self.logger.info('Deleting host(s): %s', ', '.join(hostnames))
+            self.hosts.entries = list(
+                set(self.hosts.entries) - {entry for entry in self.hosts.entries
+                                           if entry.comment == comment}
+            )
 
-        self.queue_write()
+            self.queue_write()
 
     def queue_write(self):
         """
@@ -460,10 +468,10 @@ class HostsHandler():
 
 
 class APIServerHandler(Bottle):
-    """Start the API server."""
+    """Run the API server."""
 
     def __init__(self, hosts_handler, **kwargs):
-        """Initislize variables and configure routes."""
+        """Initislize the API and configure routes."""
         super().__init__()
         self.params = SimpleNamespace(**kwargs)
         self.logger = get_logger(self.__class__.__name__, self.params.log_level)
@@ -474,65 +482,54 @@ class APIServerHandler(Bottle):
         else:
             self.ready_fd = int(self.params.ready_fd)
 
+        self.install(JwtPlugin(self.validation, self.params.api_key, algorithm="HS512"))
         self.permissions = {"user": 0, "service": 1, "admin": 2}
 
-        self.install(JwtPlugin(self.validation, self.params.api_key, algorithm="HS512"))
-
-        self.route('/auth', callback=self.auth)
-        self.route('/jwt_info', callback=self.jwt_info)
+        self.route('/auth', callback=self.auth, method='POST')
         self.route('/status', callback=self.status)
-        self.route('/add', callback=self.add_hosts, method='POST')
-        self.route('/del/<short_id>', callback=self.del_host, method='DELETE')
+        self.route('/add', callback=self.add_hosts, method='POST', auth='user')
+        self.route('/del/<short_id>', callback=self.del_host, method='DELETE', auth='user')
 
-    def validation(self, auth, auth_value):
-        """Validate auth."""
-        return self.permissions[auth["type"]] >= self.permissions[auth_value]
+    def validation(self, auth, user):
+        """Validate request."""
+        return self.permissions[auth["type"]] >= self.permissions[user]
 
     def auth(self):
         """
-        Authenticate node.
+        Authenticate a node.
 
-        receive: {'client_id': 'user', 'client_secret': 'password' }
-
+        request: {'client_id': <client_id>, 'client_secret': 'password'}
         response: {'access_token': 'token', 'type': 'bearer'}
-
-        # example for mongodb
-        user = db.users.find_one(
-            {
-                "client_id": request.json["client_id"],
-                "client_secret": hash_password(request.json["client_secret"]),
-            },
-            {"_id": False, "client_secret": False},
-        )
         """
-        # Any data we consider good, implement a logic instead of doing this
+        client_id = request.headers.get('client_id')
+        client_secret = request.headers.get('client_secret')
 
-        user = {
-            "client_id": request.json["client_id"],
-            "type": "user"
-        }
+        kdf = Scrypt(salt=str.encode(client_id), length=32, n=2**14, r=8, p=1)
+        try:
+            kdf.verify(str.encode(self.params.api_key), bytes.fromhex(client_secret))
+        except cryptography.exceptions.InvalidKey as err:
+            self.logger.warning('Invalid key from client %s: %s', client_id, err)
+            return HTTPResponse(status=401)
+
+        user = {"client_id": client_id, "client_secret": client_secret, "type": "user"}
+
         if not user:
             raise self.HTTPError(403, "Invalid user or password")
         user["exp"] = time.time() + 86400  # 1 day
         return {"access_token": JwtPlugin.encode(user), "type": "bearer"}
 
-    def jwt_info(self, auth='user'):
-        """JWT information."""
-        return auth
-
     def status(self):
         """Return API status, primarily to let clients know the API is up ."""
         return "OK"
 
-    def add_hosts(self):
+    def add_hosts(self, auth):
         """Add a new hosts."""
-        self.logger.debug('add_hosts: request: %s', request.json)
         self.hosts_handler.add_hosts(
-            request.json['container_id'], request.json['hostnames'])
+            request.json['short_id'], request.json['hostnames'])
+        return auth
 
     def del_host(self, short_id):
         """Delete hosts."""
-        self.logger.debug('del_host: %s', short_id)
         self.hosts_handler.del_hosts(short_id)
         return HTTPResponse(status=204)
 
@@ -1032,6 +1029,7 @@ def main():
 
         if args.mode == 'manager':
             ingress_handler = APIServerHandler(hosts_handler, **vars(args))
+            # ingress_handler.install(JwtPlugin(validation, args.api_key, algorithm="HS512"))
         else:
             ingress_handler = DockerHandler(hosts_handler, **vars(args))
 

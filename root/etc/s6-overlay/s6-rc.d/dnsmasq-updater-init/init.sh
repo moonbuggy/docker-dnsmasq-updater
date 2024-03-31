@@ -41,5 +41,11 @@ if env | grep -q 'DMU_'; then
 
 	[ ! -z "${DMU_DELAY}" ] && sed "s!^delay.*!delay=${DMU_DELAY}!" -i $CONFIG_FILE
 
+	[ ! -z "${DMU_API_SERVER}" ] && sed "s!^api_server.*!api_server=${DMU_API_SERVER}!" -i $CONFIG_FILE
+	[ ! -z "${DMU_API_PORT}" ] \
+		&& { sed "s!^api_port.*!api_port=${DMU_API_PORT}!" -i $CONFIG_FILE; } \
+		|| sed "s!^api_port.*!api_port=8080!" -i $CONFIG_FILE
+	[ ! -z "${DMU_API_KEY}" ] && sed "s!^api_key.*!api_key=${DMU_API_KEY}!" -i $CONFIG_FILE
+
 	sed "s!^ready_fd.*!ready_fd=5!" -i $CONFIG_FILE
 fi

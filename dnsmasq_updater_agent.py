@@ -22,7 +22,7 @@ from types import SimpleNamespace
 from typing import Dict
 
 import docker  # type: ignore[import-untyped]
-
+from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
 
 # config file and list of paths, in the order to try
 CONFIG_FILE = 'dnsmasq_updater_agent.conf'
@@ -81,14 +81,14 @@ class APIClientHandler():
 
     status with GET to <api_url>/status
     add hosts with POST to <api_url>/add
-    delete hosts with DELETE to <api_url>/del/<container_id>
+    delete hosts with DELETE to <api_url>/del/<short_id>
     """
 
     def __init__(self, **kwargs):
         """Initialize."""
         self.params = SimpleNamespace(**kwargs)
         self.logger = get_logger(self.__class__.__name__, self.params.log_level)
-        self.api_url = 'http://' + self.params.server + ':' + self.params.port + '/'
+        self.api_url = 'http://' + self.params.api_server + ':' + self.params.api_port + '/'
 
         while True:
             try:
@@ -99,55 +99,84 @@ class APIClientHandler():
                 self.logger.warning('Could not connect to API server. Retrying..')
                 time.sleep(5)
 
-    def add_hosts(self, container_id, hostnames):
-        """Add hosts via API /add."""
-        post_data = {'container_id': container_id, 'hostnames': hostnames}
+        self.client_id = 'user'
 
-        req = urllib.request.Request(
-            self.api_url + 'add',
-            json.dumps(post_data).encode(),
-            headers={"Content-Type": "application/json",
-                     'Authorization': self.params.api_key}
+        self.token = False
+        self.get_jwt_token()
+
+        if not self.token:
+            self.logger.error('No authentication token. Exiting.')
+            sys.exit()
+
+    def do_request(self, path, method, data=None):
+        """
+        Make an HTTP request to the API.
+
+        Given the API server is confirmed to be up during __init__(), an error
+        from one of the HTTP requests means the API server or the link to it has
+        gone down. The easiest way to handle this is to exit() and let Docker
+        restart the node container, or let the init system restart the script,
+        allowing __init__() to run again and wait indefinitely for the server to
+        come back up.
+        """
+        request = urllib.request.Request(
+            self.api_url + path, data, method=method,
+            headers={"Content-Type": "application/json", 'Authorization': self.token}
         )
 
-        self.logger.debug('POST body: %s', json.dumps(post_data).encode())
+        try:
+            with urllib.request.urlopen(request) as resp:
+                return resp.status
+        except urllib.error.URLError as err:
+            self.logger.error('URLError: %s: %s', request.full_url, err.reason)
+        except ConnectionRefusedError as err:
+            self.logger.error('ConnectionRefusedError: %s: %s', request.full_url, err)
+
+        self.logger.error('Cannot reach API server. Exiting.')
+        sys.exit()
+
+    def get_jwt_token(self):
+        """Get the JWT authentication token."""
+        self.logger.info('Getting JWT token.')
+
+        kdf = Scrypt(salt=str.encode(self.client_id), length=32, n=2**14, r=8, p=1)
+
+        post_data = {
+            "Content-Type": "application/json",
+            'client_id': self.client_id,
+            'client_secret': kdf.derive(str.encode(self.params.api_key)).hex()
+        }
+
+        req = urllib.request.Request(
+            self.api_url + 'auth', headers=post_data, method='POST')
 
         try:
             with urllib.request.urlopen(req) as resp:
-                if resp.getcode() == 200:
-                    self.logger.debug('Add successful (%s).', resp.status)
-                    return True
+                response_body = json.loads(resp.read().decode('utf-8'))
+                self.token = f"{response_body['type']} {response_body['access_token']}"
+        except urllib.error.HTTPError as err:
+            self.logger.error('Error authenticating: %s', err)
 
-                self.logger.error('Could not add hosts: %s: %s', container_id, resp.status)
+    def add_hosts(self, short_id, hostnames):
+        """Add hosts via API /add."""
+        post_data = json.dumps(
+            {'short_id': short_id, 'hostnames': hostnames}).encode()
 
-        except urllib.error.URLError as err:
-            self.logger.error('URLError: %s', err.reason)
-        except ConnectionRefusedError as err:
-            self.logger.warning('ConnectionRefusedError: %s', err)
+        req_status = self.do_request('add', 'POST', post_data)
 
-        return False
+        if req_status == 200:
+            self.logger.info('Added: %s', ', '.join(hostnames))
+        else:
+            self.logger.error('Could not add hosts: %s: %s', short_id, req_status)
 
     def del_hosts(self, short_id):
         """Delete hosts with matching comment via API /del/."""
-        req_url = self.api_url + 'del/' + short_id + 'break'
-        self.logger.debug('HTTP DELETE: %s', req_url)
+        req_status = self.do_request('del/' + short_id, 'DELETE')
 
-        req = urllib.request.Request(req_url, method='DELETE')
-
-        try:
-            with urllib.request.urlopen(req) as resp:
-                if resp.getcode() == 204:
-                    self.logger.debug('Delete successful (%s).', resp.status)
-                    return True
-
-                self.logger.error('Could not delete hosts: %s: %s', short_id, resp.status)
-
-        except urllib.error.URLError as err:
-            self.logger.error('URLError: %s: %s', req_url, err.reason)
-        except ConnectionRefusedError as err:
-            self.logger.warning('ConnectionRefusedError: %s: %s', self.api_url, err)
-
-        return False
+        if req_status == 204:
+            self.logger.info('Deleted: %s', short_id)
+        else:
+            self.logger.error('Could not delete hosts: %s: %s', short_id, req_status)
 
 
 class DockerHandler():
@@ -383,12 +412,8 @@ class ConfigHandler():
             'config_file': CONFIG_FILE,
             'docker_socket': 'unix://var/run/docker.sock',
             'network': '',
-            'server': '',
-            'port': '8080',
-            'login': '',
-            'password': '',
-            'key': '',
-            'file': '',
+            'api_server': '',
+            'api_port': '8080',
             'api_key': '',
             'log_level': self.log_level,
             'ready_fd': ''
@@ -398,8 +423,6 @@ class ConfigHandler():
         self.config_parser = argparse.ArgumentParser(
             formatter_class=argparse.RawDescriptionHelpFormatter,
             description=__doc__, add_help=False)
-
-        # self.general_group = self.config_parser.add_argument_group(title='General options')
 
         self.parse_initial_config()
         self.parse_config_file()
@@ -482,13 +505,13 @@ class ConfigHandler():
             '-n', '--network', action='store', metavar='NETWORK',
             help='Docker network to monitor')
         api_group.add_argument(
-            '-s', '--server', action='store', metavar='SERVER',
+            '-s', '--api_server', action='store', metavar='SERVER',
             help='API server address')
         api_group.add_argument(
-            '-P', '--port', action='store', metavar='PORT',
+            '-P', '--api_port', action='store', metavar='PORT',
             help='API server port (default: \'%(default)s\')')
         api_group.add_argument(
-            '-k', '--key', action='store', metavar='KEY',
+            '-k', '--api_key', action='store', metavar='KEY',
             help='API access key')
         parser.add_argument(
             '--ready_fd', action='store', metavar='INT',
@@ -514,11 +537,11 @@ class ConfigHandler():
                 sys.exit(1)
 
         # parameters required for the API
-        if self.args.key == '':
+        if self.args.api_key == '':
             self.logger.error('No API key specified.')
             sys.exit(1)
 
-        if self.args.server == '':
+        if self.args.api_server == '':
             self.logger.error('No API server specified.')
             sys.exit(1)
 
