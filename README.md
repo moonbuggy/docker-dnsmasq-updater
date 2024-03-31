@@ -10,7 +10,7 @@ Automatically update a remote hosts file with Docker container hostnames.
         *   [Agent usage](#agent-usage)
 *   [Setup](#setup)
     *   [Installation on Docker host](#installation-on-docker-host)
-    *   [Installation in Docker container](#installation-in-docker-container)
+    *   [Installation of Docker container](#installation-of-docker-container)
     *   [Setup on dnsmasq server](#setup-on-dnsmasq-server)
     *   [Setup for other Docker containers](#setup-for-other-docker-containers)
     *   [Use with Traefik](#use-with-traefik)
@@ -130,14 +130,14 @@ dataset. This defaults to `3` and can be disabled by `0`.
 
 ### Swarm mode
 To operate sensibly in a Docker Swarm it's necessary to adopt a manager/agent
-configuration, with one manager instance being updated (through an API interface)
-by an agent running on each Swarm node.
+configuration, with a single global manager instance being updated through an
+API interface by Agents running on each Swarm node.
 
 To enable manager mode Docker Dnsmasq Updater should be run with the `--manager`
 argument.
 
 The manager can run anywhere, it doesn't need to be in the Swarm, so long as the
-agents can access the API interface. If desired, the manager script can be run
+Agents can access the API interface. If desired, the manager script can be run
 on the device running _dnsmasq_, using the `--local` argument to write to a hosts
 file on the local system.
 
@@ -146,14 +146,14 @@ ingesting API data. Agents need to be running on all devices in the Swarm to
 catch all relevant container/service activity.
 
 #### Agent usage
-The agent is a separate script, `dnsmasq_updater_agent.py`, to remove
-unnecessary overhead and minimize resource demands on the nodes. Configuration
-is quite similar, except we're aiming at the API of a manager instance instead
-of a remote SSH server.
+The Agent is a separate script, `dnsmasq_updater_agent.py`, to remove unnecessary
+overhead and minimize resource demands on the Swarm nodes. Configuration is
+similar to the main script, we're just aiming at the API of a manager instance
+instead of a remote SSH server.
 
 ```
-usage: dnsmasq_updater_agent.py [-h] [-c FILE] [--debug] [-i IP] [-D SOCKET]
-                                [-n NETWORK] [-s SERVER] [-P PORT] [-k KEY]
+usage: dnsmasq_updater_agent.py [-h] [-c FILE] [--debug] [-D SOCKET] [-n NETWORK]
+                                [-s SERVER] [-P PORT] [-k KEY] [-R SECONDS]
                                 [--ready_fd INT]
 
 Docker Dnsmasq Updater Agent
@@ -173,9 +173,6 @@ Docker:
   -n NETWORK, --network NETWORK
                         Docker network to monitor
 
-DNS:
-  -i IP, --ip IP        IP for the DNS record
-
 API:
   -s SERVER, --api_server SERVER
                         API server address
@@ -183,25 +180,31 @@ API:
                         API server port (default: '8080')
   -k KEY, --api_key KEY
                         API access key
+  -R SECONDS, --api_retry SECONDS
+                        delay in seconds before retrying failed connection
+                        (default: '10')
 ```
 The `--api_key` argument is a string and needs to match the same on the manager.
-
-The `--ip` setting doesn't make a lot of sense yet and probably doesn't need to
-be here. Some Swarm services will run through a frontend and will want to provide
-that frontend's IP, others will want to provide the IP of the node they're
-running on. A per-container/service override for the default IP setting needs to
-be added, and the default IP should only be set by the manager.
 
 ## Setup
 Docker Dnsmasq Updater requires at least Python 3.6 and the _bottle_,
 _bottlejwt_, _docker_, _paramiko_ and _python_hosts_ modules.
 
-The script can be run standalone on the Docker host or in a Docker container, so
-long as it has access to the Docker socket it's happy.
+Docker Dnsmasq Updater Agent requires only the _docker_ module.
+
+In the default `--standalone` mode the script can be run on a standalone Docker
+host, either directly or in a container. So long as it has access to the Docker
+socket it's happy.
 
 You do not need to both install it on the host and run the container, it would
 in fact be a bad idea to do so. Choose one or the other, whichever you feel
 works best for you.
+
+In `--manager` mode the script can be run anywhere that's reachable from the
+Agents, they just need to see the API.
+
+If running on the same device as _dnsmasq_, the `--local` argument allows writing
+the hosts file to the local filesystem.
 
 ### Installation on Docker host
 Install requirements: `pip3 install -r requirements.txt`
@@ -211,7 +214,7 @@ Put `dnsmasq_updater.py` anywhere in the path.
 Put `dnsmasq_updater.conf` in `/etc/` or in the same directory as the script
 (which takes precedence over any config file in `/etc/`).
 
-### Installation in Docker container
+### Installation of Docker container
 ```sh
 docker run -d \
   --name dnsmasq-updater \
@@ -227,11 +230,12 @@ If you're using an SSH key for authentication you can persist and use the
 #### Tags
 To minimize the Docker image size, and to theoretically improve run times (I
 haven't benchmarked it because I believe it runs fast enough either way) a
-binary build is available, tagged as `binary`.
-
-A build using the un-compiled Python script is available, tagged `script`.
+binary build is available, tagged as `binary`. A build using the un-compiled
+Python script is available, tagged `script`.
 
 The default `latest` tag points to the script version.
+
+The Agent images will be tagged `agent`.
 
 > [!NOTE]
 > After upgrading the Nuitka version, binary builds are currently larger than
@@ -260,13 +264,15 @@ available, in the form `alpine-<arch>` and `alpine-binary-<arch>` for the
 
 #### Docker environment variables
 Almost all the command line parameters (see [Usage](#usage)) can be set with
-environment variables:
+environment variables.
 
-*   `DMU_MODE`           - operation mode (accepts: `standalone`, `manager` or `agent`, default: `standalone`)
+##### Docker Dnsmasq Updater
+*   `DMU_MODE`           - operation mode (accepts: `standalone`, `manager`, default: `standalone`)
 *   `DMU_HOSTS_LOCATION` - location of hosts file (accepts: `local`, `remote`, default: `remote`)
 *   `DMU_IP`             - IP for the DNS records
 *   `DMU_DOMAIN`         - domain/zone for the DNS records, defaults to `docker`
 *   `DMU_PREPEND_WWW`    - add _www_ subdomains to all hostnames, defaults to `False`
+*   `DMU_DOCKER_SOCKET`  - path to the docker socket (default: `unix://var/run/docker.sock`)
 *   `DMU_NETWORK`        - Docker network to monitor, defaults to none/disabled
 *   `DMU_SERVER`         - _dnsmasq_ server address
 *   `DMU_PORT`           - _dnsmasq_ server SSH port, defaults to `22`
@@ -276,6 +282,18 @@ environment variables:
 *   `DMU_HOSTS_FILE`     - full path to the hosts file to update on the _dnsmasq_ server
 *   `DMU_RESTART_CMD`    - command to execute to restart/update dnsmasq, defaults to `service restart_dnsmasq`
 *   `DMU_DELAY`          - delay in seconds before writing remote hosts file, defaults to `10`
+*   `DMU_API_PORT`       - port for API to listen on (default: '8080')
+*   `DMU_API_KEY`        - API access key
+*   `DMU_DEBUG`          - set `True` to enable debug log output
+*   `TZ`		             - set timezone
+
+##### Docker Dnsmasq Updater Agent
+*   `DMU_DOCKER_SOCKET`  - path to the docker socket (default: `unix://var/run/docker.sock`)
+*   `DMU_NETWORK`        - Docker network to monitor (default: none/disabled)
+*   `DMU_API_SERVER`     - API server address
+*   `DMU_API_PORT`       - port the API is listening on (default: '8080')
+*   `DMU_API_KEY`        - API access key
+*   `DMU_API_RETRY`      - delay in seconds before retrying failed connection (default: '10')
 *   `DMU_DEBUG`          - set `True` to enable debug log output
 *   `TZ`		             - set timezone
 

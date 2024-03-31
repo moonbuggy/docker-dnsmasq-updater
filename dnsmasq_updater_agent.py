@@ -13,7 +13,6 @@ import logging
 import argparse
 import configparser
 import json
-import ipaddress
 import time
 import re
 import urllib.request
@@ -21,8 +20,9 @@ import urllib.request
 from types import SimpleNamespace
 from typing import Dict
 
+from hashlib import scrypt
+
 import docker  # type: ignore[import-untyped]
-from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
 
 # config file and list of paths, in the order to try
 CONFIG_FILE = 'dnsmasq_updater_agent.conf'
@@ -95,9 +95,9 @@ class APIClientHandler():
                 with urllib.request.urlopen(self.api_url + 'status'):
                     self.logger.info('API connection established.')
                     break
-            except (urllib.error.URLError, ConnectionRefusedError):
-                self.logger.warning('Could not connect to API server. Retrying..')
-                time.sleep(5)
+            except (urllib.error.URLError, ConnectionRefusedError, ConnectionResetError):
+                self.logger.warning('Could not connect to API at %s. Retrying..', self.api_url)
+                time.sleep(self.params.api_retry)
 
         self.client_id = 'user'
 
@@ -139,12 +139,12 @@ class APIClientHandler():
         """Get the JWT authentication token."""
         self.logger.info('Getting JWT token.')
 
-        kdf = Scrypt(salt=str.encode(self.client_id), length=32, n=2**14, r=8, p=1)
-
         post_data = {
             "Content-Type": "application/json",
             'client_id': self.client_id,
-            'client_secret': kdf.derive(str.encode(self.params.api_key)).hex()
+            'client_secret': scrypt(str.encode(self.params.api_key),
+                                    salt=str.encode(self.client_id),
+                                    n=2**14, r=8, p=1, dklen=32).hex()
         }
 
         req = urllib.request.Request(
@@ -159,8 +159,8 @@ class APIClientHandler():
 
     def add_hosts(self, short_id, hostnames):
         """Add hosts via API /add."""
-        post_data = json.dumps(
-            {'short_id': short_id, 'hostnames': hostnames}).encode()
+        post_data = json.dumps({'short_id': short_id,
+                                'hostnames': hostnames}).encode()
 
         req_status = self.do_request('add', 'POST', post_data)
 
@@ -415,6 +415,7 @@ class ConfigHandler():
             'api_server': '',
             'api_port': '8080',
             'api_key': '',
+            'api_retry': 10,
             'log_level': self.log_level,
             'ready_fd': ''
         }
@@ -471,7 +472,6 @@ class ConfigHandler():
                 config = configparser.ConfigParser()
                 config.read(self.args.config_file)
                 self.defaults.update(dict(config.items("general")))
-                self.defaults.update(dict(config.items("dns")))
                 self.defaults.update(dict(config.items("docker")))
                 self.defaults.update(dict(config.items("api")))
 
@@ -492,12 +492,8 @@ class ConfigHandler():
         parser.set_defaults(**self.defaults)
 
         docker_group = parser.add_argument_group(title='Docker')
-        dns_group = parser.add_argument_group(title='DNS')
         api_group = parser.add_argument_group(title='API')
 
-        dns_group.add_argument(
-            '-i', '--ip', action='store', metavar='IP',
-            help='IP for the DNS record')
         docker_group.add_argument(
             '-D', '--docker_socket', action='store', metavar='SOCKET',
             help='path to the docker socket (default: \'%(default)s\')')
@@ -513,6 +509,9 @@ class ConfigHandler():
         api_group.add_argument(
             '-k', '--api_key', action='store', metavar='KEY',
             help='API access key')
+        api_group.add_argument(
+            '-R', '--api_retry', action='store', metavar='SECONDS', type=int,
+            help='delay in seconds before retrying failed connection (default: \'%(default)s\')')
         parser.add_argument(
             '--ready_fd', action='store', metavar='INT',
             help='set to an integer to enable signalling readiness by writing '
@@ -525,17 +524,6 @@ class ConfigHandler():
 
     def check_args(self):
         """Check we have all the information we need to run."""
-        # parameters required for DNS records
-        if self.args.ip == '':
-            self.logger.error('No host IP specified.')
-            sys.exit(1)
-        else:
-            try:
-                ipaddress.ip_address(self.args.ip)
-            except ValueError:
-                self.logger.error('Specified host IP (%s) is invalid.', self.args.ip)
-                sys.exit(1)
-
         # parameters required for the API
         if self.args.api_key == '':
             self.logger.error('No API key specified.')
