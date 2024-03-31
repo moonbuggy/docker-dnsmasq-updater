@@ -1,9 +1,13 @@
+<!--lint disable no-undefined-references no-shortcut-reference-link-->
+
 # Docker Dnsmasq Updater
 Automatically update a remote hosts file with Docker container hostnames.
 
 *   [Rationale](#rationale)
 *   [What It Does](#what-it-does)
 *   [Usage](#usage)
+    *   [Swarm mode](#swarm-mode)
+        *   [Agent usage](#agent-usage)
 *   [Setup](#setup)
     *   [Installation on Docker host](#installation-on-docker-host)
     *   [Installation in Docker container](#installation-in-docker-container)
@@ -46,26 +50,51 @@ working with a single host IP (with the exception of `extra_hosts`).
 
 ## Usage
 ```
-usage: dnsmasq_updater.py [-h] [-c FILE] [--debug] [-i IP] [-d DOMAIN] [-w]
-                          [-D SOCKET] [-n NETWORK] [-s SERVER] [-P PORT] [-l USERNAME]
-                          [-k FILE] [-p PASSWORD] [-f FILE] [-r COMMAND] [-t SECONDS]
-                          [--ready_fd INT]
+usage: dnsmasq_updater.py [-h] [-c FILE] [--debug] [--ready_fd INT]
+                          [--standalone | --manager] [-D SOCKET] [-n NETWORK] [-i IP]
+                          [-d DOMAIN] [-w] [--remote | --local] [-f FILE]
+                          [-r COMMAND] [-t SECONDS] [-s SERVER] [-P PORT]
+                          [-l USERNAME] [-k FILE] [-p PASSWORD] [--api_port PORT]
+                          [--api_key KEY]
 
 Docker Dnsmasq Updater
 
-optional arguments:
+options:
   -h, --help            show this help message and exit
   -c FILE, --config_file FILE
                         external configuration file
   --debug               turn on debug messaging
+  --ready_fd INT        set to an integer to enable signalling readiness by writing
+                        a new line to that integer file descriptor
+
+Mode:
+  --standalone          running on a standalone Docker host (default)
+  --manager             running as the manager for multiple Docker nodes, brings up
+                        the API
+
+Docker:
+  -D SOCKET, --docker_socket SOCKET
+                        path to the docker socket (default:
+                        'unix://var/run/docker.sock')
+  -n NETWORK, --network NETWORK
+                        Docker network to monitor
+
+DNS:
   -i IP, --ip IP        IP for the DNS record
   -d DOMAIN, --domain DOMAIN
                         domain/zone for the DNS record (default: 'docker')
   -w, --prepend_www     add 'www' subdomains for all hostnames
-  -D SOCKET, --docker_socket SOCKET
-                        path to the docker socket (default: 'unix://var/run/docker.sock')
-  -n NETWORK, --network NETWORK
-                        Docker network to monitor
+
+hosts file:
+  --remote              write to a remote hosts file, via SSH (default)
+  --local               write to a local hosts file
+  -f FILE, --file FILE  the hosts file (including path) to write
+  -r COMMAND, --restart_cmd COMMAND
+                        the dnsmasq restart command to execute
+  -t SECONDS, --delay SECONDS
+                        delay for writes to the hosts file (default: '10')
+
+Remote hosts file (needed by --remote):
   -s SERVER, --server SERVER
                         dnsmasq server address
   -P PORT, --port PORT  port for SSH on the dnsmasq server (default: '22')
@@ -74,17 +103,13 @@ optional arguments:
   -k FILE, --key FILE   identity/key file for SSH to the dnsmasq server
   -p PASSWORD, --password PASSWORD
                         password for the dnsmasq server OR for an encrypted SSH key
-  -f FILE, --file FILE  the file (including path) to write on the dnsmasq server
-  -r COMMAND, --remote_cmd COMMAND
-                        the update command to execute on the dnsmasq server
-  -t SECONDS, --delay SECONDS
-                        delay for writes to the dnsmasq server (default: '10')
-  --ready_fd INT        set to an integer to enable signalling readiness by writing
-                        a new line to that integer file descriptor
+
+API server (needed by --manager):
+  --api_port PORT       port for API to listen on (default: '8080')
+  --api_key KEY         API access key
 ```
 
-Any command line parameters take precedence over settings in
-`dnsmasq_updater.conf`.
+Any command line parameters take precedence over settings in `dnsmasq_updater.conf`.
 
 The SSH connection requires either a login/password combination or a login/key
 combination. If using a key that is encrypted any password parameter supplied
@@ -102,6 +127,70 @@ local copy of the hosts file being written. This is useful during extremely
 rapid changes to the hosts configuration, primarily during Dnsmasq Updater's
 startup/initialization as it actively scans for containers to populate an empty
 dataset. This defaults to `3` and can be disabled by `0`.
+
+### Swarm mode
+To operate sensibly in a Docker Swarm it's necessary to adopt a manager/agent
+configuration, with one manager instance being updated (through an API interface)
+by an agent running on each Swarm node.
+
+To enable manager mode Docker Dnsmasq Updater should be run with the `--manager`
+argument.
+
+The manager can run anywhere, it doesn't need to be in the Swarm, so long as the
+agents can access the API interface. If desired, the manager script can be run
+on the device running _dnsmasq_, using the `--local` argument to write to a hosts
+file on the local system.
+
+In manager mode the script won't listen to the Docker socket directly, only
+ingesting API data. Agents need to be running on all devices in the Swarm to
+catch all relevant container/service activity.
+
+#### Agent usage
+The agent is a separate script, `dnsmasq_updater_agent.py`, to remove
+unnecessary overhead and minimize resource demands on the nodes. Configuration
+is quite similar, except we're aiming at the API of a manager instance instead
+of a remote SSH server.
+
+```
+usage: dnsmasq_updater_agent.py [-h] [-c FILE] [--debug] [-i IP] [-D SOCKET]
+                                [-n NETWORK] [-s SERVER] [-P PORT] [-k KEY]
+                                [--ready_fd INT]
+
+Docker Dnsmasq Updater Agent
+
+options:
+  -h, --help            show this help message and exit
+  -c FILE, --config_file FILE
+                        external configuration file
+  --debug               turn on debug messaging
+  --ready_fd INT        set to an integer to enable signalling readiness by
+                        writing a new line to that integer file descriptor
+
+Docker:
+  -D SOCKET, --docker_socket SOCKET
+                        path to the docker socket (default:
+                        'unix://var/run/docker.sock')
+  -n NETWORK, --network NETWORK
+                        Docker network to monitor
+
+DNS:
+  -i IP, --ip IP        IP for the DNS record
+
+API:
+  -s SERVER, --api_server SERVER
+                        API server address
+  -P PORT, --api_port PORT
+                        API server port (default: '8080')
+  -k KEY, --api_key KEY
+                        API access key
+```
+The `--api_key` argument is a string and needs to match the same on the manager.
+
+The `--ip` setting doesn't make a lot of sense yet and probably doesn't need to
+be here. Some Swarm services will run through a frontend and will want to provide
+that frontend's IP, others will want to provide the IP of the node they're
+running on. A per-container/service override for the default IP setting needs to
+be added, and the default IP should only be set by the manager.
 
 ## Setup
 Docker Dnsmasq Updater requires at least Python 3.6 and the _bottle_,
@@ -299,31 +388,6 @@ http:
 ```
 
 ## Known Issues
-#### Docker Swarm mode
-The script currently isn't capable of working sensibly in a Swarm. The initial
-Swarm-aware code in the script is more about "doesn't crash" than "works" and,
-although it will now run on a Swarm node, it can't see beyond that node.
-
-It would need to be running on every node in the swarm to catch every container,
-which is do-able but means you end up with many nodes all wanting to write to
-the same hosts file (creating conflicts and locking issues) or many hosts files
-that need to be collated by _dnsmasq_ (creating management overhead, if it's
-necessary to modify the _dnsmasq_ configuration to add new hosts files when
-nodes are added).
-
-The best option for proper Swarm functionality looks like it's going to be a
-master/agent sort of deal, with a single master in the swarm (or potentially on
-the hardware running _dnsmasq_) exposing an API and agents on each node that
-feed relevant local Docker socket activity to that API.
-
-This shouldn't be too hard to implement and, with a bit of luck, time and
-motivation will overlap and this will happen in the not too distant future.
-
-The tricky part is probably figuring out the IPs to use in this scenario, as
-some services will run through a load-balancer/frontend and will want to resolve
-to that IP and others will be exposed directly and want to resolve to the node's
-IP.
-
 #### pyinit_main: can't initialize time
 The container may fail to start on some ARM devices with this error:
 
