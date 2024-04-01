@@ -71,7 +71,6 @@ def get_logger(class_name, log_level):
     logger.setLevel(log_level)
 
     loggers[name] = logger
-
     return logger
 
 
@@ -100,7 +99,6 @@ class APIClientHandler():
                 time.sleep(self.params.api_retry)
 
         self.client_id = 'user'
-
         self.token = False
         self.get_jwt_token()
 
@@ -112,12 +110,11 @@ class APIClientHandler():
         """
         Make an HTTP request to the API.
 
-        Given the API server is confirmed to be up during __init__(), an error
-        from one of the HTTP requests means the API server or the link to it has
-        gone down. The easiest way to handle this is to exit() and let Docker
-        restart the node container, or let the init system restart the script,
-        allowing __init__() to run again and wait indefinitely for the server to
-        come back up.
+        An error from one of the HTTP requests means the API server or the link
+        to it has gone down. The easiest way to handle this is to exit() and let
+        Docker restart the node container, or let the init system restart the
+        script, allowing __init__() to run again and wait indefinitely for the
+        server to come back up.
         """
         request = urllib.request.Request(
             self.api_url + path, data, method=method,
@@ -524,7 +521,6 @@ class ConfigHandler():
 
     def check_args(self):
         """Check we have all the information we need to run."""
-        # parameters required for the API
         if self.args.api_key == '':
             self.logger.error('No API key specified.')
             sys.exit(1)

@@ -108,6 +108,7 @@ Remote hosts file (needed by --remote):
 API server (needed by --manager):
   --api_port PORT       port for API to listen on (default: '8080')
   --api_key KEY         API access key
+  --api_backend STRING  API backend (refer to Bottle module docs for details)
 ```
 
 Any command line parameters take precedence over settings in `dnsmasq_updater.conf`.
@@ -202,10 +203,12 @@ in fact be a bad idea to do so. Choose one or the other, whichever you feel
 works best for you.
 
 In `--manager` mode the script can be run anywhere that's reachable from the
-Agents, they just need to see the API.
+Agents, they just need to be able to see the API. If running the API with a
+backend set by `--api_backend` (rather than using Bottle directly), that
+backend's module will need to be installed.
 
 If running on the same device as _dnsmasq_, the `--local` argument allows writing
-the hosts file to the local filesystem.
+the hosts file directly to the local filesystem.
 
 ### Installation on Docker host
 Install requirements: `pip3 install -r requirements.txt`

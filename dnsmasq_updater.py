@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 # pylint: disable=too-many-lines
-
 """
 Docker Dnsmasq Updater.
 
@@ -44,7 +43,6 @@ CONFIG_PATHS = [os.path.dirname(os.path.realpath(__file__)), '/etc/', '/conf/']
 
 DEFAULT_LOG_LEVEL = logging.INFO
 
-# delimiter to surround block of entries in hosts file
 BLOCK_START = '### docker dnsmasq updater start ###'
 BLOCK_END = '### docker dnsmasq updater end ###'
 
@@ -91,6 +89,20 @@ def get_logger(class_name, log_level):
     loggers[name] = logger
 
     return logger
+
+
+def signal_ready(ready_fd, logger):
+    """Signal we're ready."""
+    if ready_fd:
+        logger.info('Initialization done. Signalling readiness.')
+        logger.debug('Readiness signal writing to file descriptor %s.', ready_fd)
+
+        try:
+            os.write(ready_fd, '\n'.encode())
+        except OSError:
+            logger.warning('Could not signal file descriptor \'%s\'.', ready_fd)
+    else:
+        logger.info('Initialization done.')
 
 
 class ResettableTimer():
@@ -491,6 +503,8 @@ class APIServerHandler(Bottle):
         self.route('/add', callback=self.add_hosts, method='POST', auth='user')
         self.route('/del/<short_id>', callback=self.del_host, method='DELETE', auth='user')
 
+        signal_ready(self.ready_fd, self.logger)
+
     def validation(self, auth, user):
         """Validate request."""
         return self.permissions[auth["type"]] >= self.permissions[user]
@@ -516,7 +530,7 @@ class APIServerHandler(Bottle):
 
         if not user:
             raise self.HTTPError(403, "Invalid user or password")
-        user["exp"] = time.time() + 86400  # 1 day
+        user["exp"] = time.time() + 86400
         return {"access_token": JwtPlugin.encode(user), "type": "bearer"}
 
     def status(self):
@@ -524,7 +538,7 @@ class APIServerHandler(Bottle):
         return "OK"
 
     def add_hosts(self, auth):
-        """Add a new hosts."""
+        """Add new hosts."""
         self.hosts_handler.add_hosts(
             request.json['short_id'], request.json['hostnames'])
         return auth
@@ -535,21 +549,17 @@ class APIServerHandler(Bottle):
         return HTTPResponse(status=204)
 
     def start_monitor(self):
-        """Run the API server."""
-        if self.ready_fd:
-            self.logger.info('Initialization done. Signalling readiness.')
-            self.logger.debug(
-                'Readiness signal writing to file descriptor %s.', self.ready_fd)
-            try:
-                os.write(self.ready_fd, '\n'.encode())
-            except OSError:
-                self.logger.warning('Could not signal file descriptor \'%s\'.', self.ready_fd)
-        else:
-            self.logger.info('Initialization done.')
+        """
+        Run the API.
 
-        self.run(host='0.0.0.0', port=self.params.api_port, debug=self.params.debug)
+        Ensure sys.argv is cleared before calling run(), otherwise this script's
+        arguments get fed as arguments to the backend.
+        """
+        self.logger.info('Starting API..')
 
-        self.logger.debug('Bottle started.')
+        sys.argv = sys.argv[:1]
+        self.run(host='0.0.0.0', server=self.params.api_backend,
+                 port=self.params.api_port, debug=self.params.debug)
 
 
 class DockerHandler():
@@ -664,7 +674,7 @@ class DockerHandler():
             if 'dnsmasq.updater.enable' not in service.attrs['Spec']['Labels']:
                 self.logger.debug('dnsmasq.updater.enable not found for %s', service.name)
                 return
-            # container = self.client.containers.get(event['Actor']['ID'])
+
             name = service.name
             names = service.attrs['Spec']['Labels']['dnsmasq.updater.host'].split()
         else:
@@ -723,19 +733,10 @@ class DockerHandler():
                 self.hosts_handler.del_hosts(short_id)
 
     def handle_events(self, event):
-        """Monitor the docker socket for events."""
-        # if (event['Type'] == 'service'):
-        #     self.logger.debug('Service event: %s', event)
-        # elif (event['Type'] == 'container'):
-        #     self.logger.debug('Container event: %s', event)
-        # elif (event['Type'] == 'network'):
-        #     self.logger.debug('Network event: %s', event)
-
-        # trigger on container start/stop
+        """Monitor the docker socket for relevant container and network events."""
         if (event['Type'] == 'container') and (event['status'] in {'start', 'stop'}):
             self.handle_container_event(event)
 
-        # trigger on network connect/disconnect
         elif (event['Type'] == 'network') and \
             (self.params.network in event['Actor']['Attributes']['name']) \
                 and (event['Action'] in {'connect', 'disconnect'}):
@@ -752,22 +753,11 @@ class DockerHandler():
 
         if self.params.network:
             self.scan_network_containers()
-
         if self.scan_success:
             self.hosts_handler.queue_write()
 
-        if self.ready_fd:
-            self.logger.info('Initialization done. Signalling readiness.')
-            self.logger.debug(
-                'Readiness signal writing to file descriptor %s.', self.ready_fd)
-            try:
-                os.write(self.ready_fd, '\n'.encode())
-            except OSError:
-                self.logger.warning('Could not signal file descriptor \'%s\'.', self.ready_fd)
-        else:
-            self.logger.info('Initialization done.')
-
         events = self.client.events(decode=True)
+        signal_ready(self.ready_fd, self.logger)
 
         while True:
             for event in events:
@@ -798,6 +788,7 @@ class ConfigHandler():
             'location': 'remote',
             'api_port': '8080',
             'api_key': '',
+            'api_backend': '',
             'log_level': self.log_level,
             'delay': 10,
             'local_write_delay': 3,
@@ -829,9 +820,7 @@ class ConfigHandler():
             self.defaults['log_level'] = logging.DEBUG
 
         self.logger = get_logger(self.__class__.__name__, self.log_level)
-
-        self.logger.debug('Initial args: %s',
-                          json.dumps(vars(self.args), indent=4))
+        self.logger.debug('Initial args: %s', json.dumps(vars(self.args), indent=4))
 
     def parse_config_file(self):
         """Find and read external configuration files, if they exist."""
@@ -871,15 +860,14 @@ class ConfigHandler():
         """
         Parse command line arguments.
 
-        Overwrite both default config and anything found in a config file.
+        Overwrite the default config and anything found in a config file.
         """
         parser = argparse.ArgumentParser(
             description='Docker Dnsmasq Updater', parents=[self.config_parser])
         parser.set_defaults(**self.defaults)
 
         parser.add_argument(
-            '--local_write_delay', action='store', type=int,
-            help=argparse.SUPPRESS)
+            '--local_write_delay', action='store', type=int, help=argparse.SUPPRESS)
         parser.add_argument(
             '--ready_fd', action='store', metavar='INT',
             help='set to an integer to enable signalling readiness by writing '
@@ -956,9 +944,11 @@ class ConfigHandler():
             help='port for API to listen on (default: \'%(default)s\')')
         api_group.add_argument(
             '--api_key', action='store', metavar='KEY', help='API access key')
+        api_group.add_argument(
+            '--api_backend', action='store', metavar='STRING',
+            help='API backend (refer to Bottle module docs for details)')
 
         self.args = parser.parse_args()
-
         self.logger.debug('Parsed command line:\n%s',
                           json.dumps(vars(self.args), indent=4))
 
@@ -986,7 +976,6 @@ class ConfigHandler():
             self.logger.error('Specified delay (%s) is invalid.', self.args.delay)
             sys.exit(1)
 
-        # parameters only required for a remote hosts file
         if self.args.location == 'remote':
             if self.args.login == '':
                 self.logger.error('No login name specified.')
@@ -1004,7 +993,6 @@ class ConfigHandler():
                 self.logger.error('No remote server specified.')
                 sys.exit(1)
 
-        # parameters only required for manager mode
         if self.args.mode == 'manager' and self.args.api_key == '':
             self.logger.error('No API key specified.')
             sys.exit(1)

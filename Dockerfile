@@ -26,6 +26,10 @@ RUN python3 -m pip install --upgrade virtualenv \
 ARG AGENT_STRING=''
 COPY "./requirements${AGENT_STRING}.txt" ./requirements.txt
 
+ARG API_BACKEND="${API_BACKEND:-}"
+RUN [ ! -z "${API_BACKEND}" ] \
+		&& echo "${API_BACKEND}" >> ./requirements.txt
+
 # Python wheels from pre_build
 ARG TARGET_ARCH_TAG="amd64"
 ARG IMPORTS_DIR=".imports"
@@ -68,12 +72,14 @@ WORKDIR "${BUILDER_ROOT}"
 
 COPY ./root ./
 
+ARG API_BACKEND="${API_BACKEND:-}"
 RUN add-contenv \
 		APP_PATH="${APP_PATH}" \
 		PATH="${VIRTUAL_ENV}/bin:${ORIGINAL_PATH}" \
 		VIRTUAL_ENV="${VIRTUAL_ENV}" \
 		PYTHONDONTWRITEBYTECODE="1" \
 		PYTHONUNBUFFERED="1" \
+		DMU_API_BACKEND="${API_BACKEND}" \
 	&& cp /etc/contenv_extra ./etc/
 
 
@@ -83,5 +89,7 @@ FROM "${FROM_IMAGE}"
 
 ARG BUILDER_ROOT
 COPY --from=builder "${BUILDER_ROOT}/" /
+
+ENV S6_CMD_WAIT_FOR_SERVICES_MAXTIME=0
 
 HEALTHCHECK --start-period=10s --timeout=10s CMD /healthcheck.sh
