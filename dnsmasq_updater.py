@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# pylint: disable=too-many-lines
 
 """
 Docker Dnsmasq Updater.
@@ -891,8 +892,7 @@ class ConfigHandler():
             help='running on a standalone Docker host (default)')
         mode.add_argument(
             '--manager', action='store_const', dest='mode', const='manager',
-            help='running as the manager for multiple Docker nodes, brings up \
-                the API')
+            help='bring up the API and run as the manager for multiple Docker nodes')
 
         docker_group = parser.add_argument_group(title='Docker')
         docker_group.add_argument(
@@ -1029,7 +1029,6 @@ def main():
 
         if args.mode == 'manager':
             ingress_handler = APIServerHandler(hosts_handler, **vars(args))
-            # ingress_handler.install(JwtPlugin(validation, args.api_key, algorithm="HS512"))
         else:
             ingress_handler = DockerHandler(hosts_handler, **vars(args))
 

@@ -10,7 +10,7 @@ Automatically update a remote hosts file with Docker container hostnames.
         *   [Agent usage](#agent-usage)
 *   [Setup](#setup)
     *   [Installation on Docker host](#installation-on-docker-host)
-    *   [Installation of Docker container](#installation-of-docker-container)
+    *   [Installation of Docker container(s)](#installation-of-docker-containers)
     *   [Setup on dnsmasq server](#setup-on-dnsmasq-server)
     *   [Setup for other Docker containers](#setup-for-other-docker-containers)
     *   [Use with Traefik](#use-with-traefik)
@@ -36,17 +36,18 @@ This script has been built with an [AsusWRT-Merlin][]/[Entware][] router in
 mind, but should work with any device running _dnsmasq_ or using a hosts file.
 
 ## What It Does
--   Runs on the Docker host OR in a container
+-   Runs on the Docker host OR in a container OR anywhere (in manager mode)
 -   On load, scans all running containers for a `dnsmasq.updater.enable` label
 -   Optionally, on load, scans a specified Docker network for running containers
 -   After loading, monitors the Docker socket for containers starting/stopping
     and optionally connecting/disconnecting to a specified Docker network
 -   Finds any hostnames for containers meeting criteria
--   Writes a remote hosts file
--   Restarts a remote _dnsmasq_ server
+-   Writes a hosts file
+-   Restarts a _dnsmasq_ daemon
 
-Currently the updater is built for a standalone Docker host, generally only
-working with a single host IP (with the exception of `extra_hosts`).
+Currently the updater generally only works with a single host IP (with the
+exception of `extra_hosts`). If running in a Swarm, the services will need to
+be accessible through a frontend of some sort to expose them all on the same IP.
 
 ## Usage
 ```
@@ -69,8 +70,8 @@ options:
 
 Mode:
   --standalone          running on a standalone Docker host (default)
-  --manager             running as the manager for multiple Docker nodes, brings up
-                        the API
+  --manager             bring up the API and run as the manager for multiple
+                        Docker nodes
 
 Docker:
   -D SOCKET, --docker_socket SOCKET
@@ -214,7 +215,8 @@ Put `dnsmasq_updater.py` anywhere in the path.
 Put `dnsmasq_updater.conf` in `/etc/` or in the same directory as the script
 (which takes precedence over any config file in `/etc/`).
 
-### Installation of Docker container
+### Installation of Docker container(s)
+#### Standalone deployment
 ```sh
 docker run -d \
   --name dnsmasq-updater \
@@ -227,7 +229,71 @@ you'll need to persist it with `-v <host path>:/app/conf/dnsmasq_updater.conf`.
 If you're using an SSH key for authentication you can persist and use the
 `/app/keys/` folder.
 
-#### Tags
+#### Swarm deployment
+##### docker-compose.yml
+```yaml
+version: '3.8'
+
+services:
+  dnsmasq-updater:
+    image: moonbuggy2000/dnsmasq-updater:script
+    deploy:
+      mode: replicated
+      replicas: 1
+    environment:
+      - DMU_DEBUG=false
+      - DMU_MODE=manager
+      - DMU_DOMAIN=swarm
+      - DMU_IP=<loadbalancer_IP>
+      - DMU_KEY=/app/keys/id_rsa
+      - DMU_LOGIN=<login>
+      - DMU_PREPEND_WWW=true
+      - DMU_REMOTE_FILE=/opt/etc/hosts.swarm
+      - DMU_SERVER=<dnsmasq_server_IP>
+      - DMU_API_PORT=8080
+      - DMU_API_KEY=<api_key>
+    volumes:
+      - dnsmasq-updater_keys:/app/keys
+    networks:
+      - traefik
+
+  dnsmasq-updater-agent:
+    image: moonbuggy2000/dnsmasq-updater:agent
+    deploy:
+      mode: global
+    environment:
+      - DMU_DEBUG=false
+      - DMU_NETWORK=traefik
+      - DMU_API_SERVER=tasks.dnsmasq-updater
+      - DMU_API_PORT=8080
+      - DMU_API_KEY=<api_key>
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - traefik
+
+volumes:
+  dnsmasq-updater_keys:
+    name: dnsmasq-updater_keys
+
+networks:
+  traefik:
+    external: true
+```
+The compose file assumes there's a pre-existing Traefik service and network.
+As well as needing a load balancer in front of the services we want to access,
+the agents also use the _traefik_ network for communicating with the manager.
+Since they're all on that network to monitor it anyway, it doesn't seem
+necessary to create a dedicated _DMU_ network.
+
+The manager service's `DMU_IP` will need to point to a load balancer, Traefik or
+otherwise. In a (hopefully near) future update it will be possible to override
+this default IP on a per-container or per-service basis by setting a label.
+
+See below for a detailed description of available
+[environment variables](#docker-environment-variables).
+
+#### Image Tags
 To minimize the Docker image size, and to theoretically improve run times (I
 haven't benchmarked it because I believe it runs fast enough either way) a
 binary build is available, tagged as `binary`. A build using the un-compiled
