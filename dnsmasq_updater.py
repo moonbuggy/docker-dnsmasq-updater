@@ -153,42 +153,27 @@ class LocalHandler():
         self.logger = get_logger(self.__class__.__name__, self.params.log_level)
         self.delayed_put = ResettableTimer(self.params.delay, self.put_hostfile)
 
-        self.get_hostfile()
-
-    def get_hostfile(self):
-        """Get the specified hosts file from the remote device."""
-        self.logger.info('Reading hosts file: %s', self.params.file)
-
-        hosts = []
-        with open(self.params.file, encoding='utf-8') as hosts_file:
-            hosts = hosts_file.readlines()
-
-        self.hosts = hosts
-
     def queue_put(self):
-        """
-        Delayed writing of the temporary hosts file on top of the real file.
-
-        The delay allows for any additional changes in the immediate future,
-        such as expected when a container is restarting, for example.
-        """
-        self.logger.info('Queued host file update.')
+        """Delayed writing of the hosts file, allowing for multiple proximate events."""
+        self.logger.info('Queued hosts file update.')
         self.delayed_put.reset()
 
     def put_hostfile(self):
-        """Write the temporary hosts file over the top of the real file."""
+        """Copy the temporary hosts file over the top of the real file."""
         self.logger.info('Writing hosts file: %s', self.params.file)
 
-        with open(self.temp_file.name, 'r', encoding='utf-8') as temp_file:
-            hosts = temp_file.read()
+        try:
+            with open(self.temp_file.name, 'r', encoding='utf-8') as temp_file:
+                hosts = temp_file.read()
+            with open(self.params.file, 'w', encoding='utf-8') as hosts_file:
+                hosts_file.write(str(BLOCK_START + '\n' + hosts + BLOCK_END + '\n'))
+        except FileNotFoundError as err:
+            self.logger.error('Error writing hosts file: %s', err)
 
-        with open(self.params.file, 'w', encoding='utf-8') as hosts_file:
-            hosts_file.write(str(BLOCK_START + '\n' + hosts + BLOCK_END + '\n'))
+        self.exec_restart_command()
 
-        self.exec_resetart_command()
-
-    def exec_resetart_command(self):
-        """Execute command to update dnsmasq on remote device."""
+    def exec_restart_command(self):
+        """Execute command to restart dnsmasq on the local device."""
         restart_cmd = self.params.restart_cmd.strip('\'"')
 
         try:
@@ -217,16 +202,12 @@ class RemoteHandler():
             self.logger.debug('self.params.key: %s', self.params.key)
             self.verify_key()
 
-        self.get_hostfile()
-
     def get_server_ip(self):
         """
         Check for a valid dnsmasq server IP to use.
 
         We can't use a hostname for the server because we end up trying to do a
-        DNS lookup immediately after instructing dnsmasq to restart, and it's
-        generally unwise to attempt a DNS resolution when we've just shut down
-        the DNS server.
+        DNS lookup immediately after instructing dnsmasq to restart.
         """
         try:
             ipaddress.ip_address(self.params.server)
@@ -306,21 +287,6 @@ class RemoteHandler():
             self.logger.debug('Closing SSH connection.')
             self.ssh.close()
 
-    def get_hostfile(self):
-        """Get the specified hosts file from the remote device."""
-        self.logger.info('Reading remote hosts file: %s', self.params.file)
-
-        self.open_ssh()
-        exec_return = self.ssh.exec_command('cat ' + self.params.file)[1]
-
-        remote_hosts = []
-        if exec_return.channel.recv_exit_status():
-            self.logger.info('Remote hosts file does not exist, it will be created.')
-        else:
-            remote_hosts = exec_return.readlines()
-
-        self.hosts = remote_hosts
-
     def queue_put(self):
         """
         Delayed putting of the local hosts file on the remote device.
@@ -328,7 +294,7 @@ class RemoteHandler():
         The delay allows for any additional changes in the immediate future,
         such as expected when a container is restarting, for example.
         """
-        self.logger.info('Queued remote host file update.')
+        self.logger.info('Queued remote hosts file update.')
         self.delayed_put.reset()
 
     def put_hostfile(self):
@@ -343,10 +309,10 @@ class RemoteHandler():
             if exec_return.channel.recv_exit_status():
                 self.logger.error('Could not write remote file.')
 
-        self.exec_resetart_command()
+        self.exec_restart_command()
         self.close_ssh()
 
-    def exec_resetart_command(self):
+    def exec_restart_command(self):
         """Execute command to update dnsmasq on remote device."""
         self.open_ssh()
         restart_cmd = self.params.restart_cmd.strip('\'"')
@@ -372,17 +338,14 @@ class HostsHandler():
         self.output_handler = output_handler
         self.temp_file = output_handler.temp_file
         self.delayed_write = ResettableTimer(self.params.local_write_delay, self.write_hosts)
-
         self.hosts = Hosts(path='/dev/null')
 
     def parse_hostnames(self, hostnames):
         """
         Return dictionary items containing IPs and a list of hostnames.
 
-        dict_items([
-            ('<IP_1>', ['<hostname1>', '<hostname2>', etc..]),
-            ('<IP_2>', ['<hostname3>', '<hostname4>', etc..]),
-            etc..])
+        dict_items([('<IP_1>', ['<hostname1>', '<hostname2>', etc..]),
+                    ('<IP_2>', ['<hostname3>', '<hostname4>', etc..]), etc..])
         """
         hostname_dict = defaultdict(set)
 
@@ -552,8 +515,7 @@ class APIServerHandler(Bottle):
         """
         Run the API.
 
-        Ensure sys.argv is cleared before calling run(), otherwise this script's
-        arguments get fed as arguments to the backend.
+        Clear sys.argv before calling run(), else args get sent to the backend.
         """
         self.logger.info('Starting API..')
 
@@ -954,47 +916,52 @@ class ConfigHandler():
 
     def check_args(self):
         """Check we have all the information we need to run."""
+        do_exit = False
+
         if self.args.ip == '':
             self.logger.error('No host IP specified.')
-            sys.exit(1)
-
-        try:
-            ipaddress.ip_address(self.args.ip)
-        except ValueError:
-            self.logger.error('Specified host IP (%s) is invalid.', self.args.ip)
-            sys.exit(1)
+            do_exit = True
+        else:
+            try:
+                ipaddress.ip_address(self.args.ip)
+            except ValueError:
+                self.logger.error('Specified host IP (%s) is invalid.', self.args.ip)
+                do_exit = True
 
         if self.args.file == '':
             self.logger.error('No hosts file specified.')
-            sys.exit(1)
+            do_exit = True
 
         if self.args.restart_cmd == '':
             self.logger.error('No dnsmasq restart command specified.')
-            sys.exit(1)
+            do_exit = True
 
         if not isinstance(self.args.delay, int):
             self.logger.error('Specified delay (%s) is invalid.', self.args.delay)
-            sys.exit(1)
+            do_exit = True
 
         if self.args.location == 'remote':
             if self.args.login == '':
-                self.logger.error('No login name specified.')
-                sys.exit(1)
+                self.logger.error('No remote login name specified.')
+                do_exit = True
 
             if self.args.key == '':
                 if self.args.password == '':
-                    self.logger.error('No password or key specified.')
-                    sys.exit(1)
+                    self.logger.error('No remote password or key specified.')
+                    do_exit = True
             elif not os.path.exists(self.args.key):
                 self.logger.error('Key file (%s) does not exist.', self.args.key)
-                sys.exit(1)
+                do_exit = True
 
             if self.args.server == '':
                 self.logger.error('No remote server specified.')
-                sys.exit(1)
+                do_exit = True
 
         if self.args.mode == 'manager' and self.args.api_key == '':
-            self.logger.error('No API key specified.')
+            self.logger.error('No manager API key specified.')
+            do_exit = True
+
+        if do_exit:
             sys.exit(1)
 
     def get_args(self):
@@ -1016,12 +983,12 @@ def main():
         hosts_handler = HostsHandler(output_handler, **vars(args))
 
         if args.mode == 'manager':
-            ingress_handler = APIServerHandler(hosts_handler, **vars(args))
+            input_handler = APIServerHandler(hosts_handler, **vars(args))
         else:
-            ingress_handler = DockerHandler(hosts_handler, **vars(args))
+            input_handler = DockerHandler(hosts_handler, **vars(args))
 
         try:
-            ingress_handler.start_monitor()
+            input_handler.start_monitor()
         except SystemExit:
             pass
         finally:

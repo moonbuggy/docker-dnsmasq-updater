@@ -27,8 +27,7 @@ ARG AGENT_STRING=''
 COPY "./requirements${AGENT_STRING}.txt" ./requirements.txt
 
 ARG API_BACKEND="${API_BACKEND:-}"
-RUN [ ! -z "${API_BACKEND}" ] \
-		&& echo "${API_BACKEND}" >> ./requirements.txt
+RUN test ! -z "${API_BACKEND}" && echo "${API_BACKEND}" >> ./requirements.txt
 
 # Python wheels from pre_build
 ARG TARGET_ARCH_TAG="amd64"

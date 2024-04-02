@@ -89,13 +89,14 @@ class APIClientHandler():
         self.logger = get_logger(self.__class__.__name__, self.params.log_level)
         self.api_url = 'http://' + self.params.api_server + ':' + self.params.api_port + '/'
 
+        api_status_url = self.api_url + 'status'
         while True:
             try:
-                with urllib.request.urlopen(self.api_url + 'status'):
+                with urllib.request.urlopen(api_status_url):
                     self.logger.info('API connection established.')
                     break
             except (urllib.error.URLError, ConnectionRefusedError, ConnectionResetError):
-                self.logger.warning('Could not connect to API at %s. Retrying..', self.api_url)
+                self.logger.warning('Could not connect to API at %s. Retrying..', api_status_url)
                 time.sleep(self.params.api_retry)
 
         self.client_id = 'user'
@@ -288,7 +289,6 @@ class DockerHandler():
             if 'dnsmasq.updater.enable' not in service.attrs['Spec']['Labels']:
                 self.logger.debug('dnsmasq.updater.enable not found for %s', service.name)
                 return
-            # container = self.client.containers.get(event['Actor']['ID'])
             name = service.name
             names = service.attrs['Spec']['Labels']['dnsmasq.updater.host'].split()
         else:

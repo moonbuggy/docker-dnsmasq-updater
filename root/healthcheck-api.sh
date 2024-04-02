@@ -1,4 +1,5 @@
 #!/usr/bin/with-contenv /bin/sh
+# shellcheck shell=sh
 
 up="$(s6-svstat -o up /var/run/service/dnsmasq-updater/)"
 
