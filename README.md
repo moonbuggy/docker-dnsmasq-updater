@@ -7,7 +7,6 @@ Automatically update a remote hosts file with Docker container hostnames.
 *   [What It Does](#what-it-does)
 *   [Usage](#usage)
     *   [Swarm mode](#swarm-mode)
-        *   [Agent usage](#agent-usage)
 *   [Setup](#setup)
     *   [Installation on Docker host](#installation-on-docker-host)
     *   [Installation of Docker container(s)](#installation-of-docker-containers)
@@ -19,12 +18,12 @@ Automatically update a remote hosts file with Docker container hostnames.
 
 ## Rationale
 If you have a LAN with your router using _dnsmasq_ for local DNS you may find
-yourself frequently updating a hosts file as you add or remove Docker
-containers. The currently available options for automating this typically
-require you to put Docker containers in a subdomain (e.g. \*.docker.local)
-and/or, if you want to keep the containers in the top level domain (e.g.
-\*.local), installing a full-fledged name server on the router and syncing it
-with the same in a container on the Docker host.
+yourself frequently updating a hosts file as you add or remove Docker containers.
+The currently available options for automating this typically require you to put
+Docker containers in a subdomain (e.g. \*.docker.local) and/or, if you want to
+keep the containers in the top level domain (e.g. \*.local), installing a
+full-fledged name server on the router and syncing it with the same in a
+container on the Docker host.
 
 Docker Dnsmasq Updater allows host names to be added or removed automatically
 without added complexity or resource demands on the router. It can be run as a
@@ -44,10 +43,6 @@ mind, but should work with any device running _dnsmasq_ or using a hosts file.
 -   Finds any hostnames for containers meeting criteria
 -   Writes a hosts file
 -   Restarts a _dnsmasq_ daemon
-
-Currently the updater generally only works with a single host IP (with the
-exception of `extra_hosts`). If running in a Swarm, the services will need to
-be accessible through a frontend of some sort to expose them all on the same IP.
 
 ## Usage
 ```
@@ -81,7 +76,7 @@ Docker:
                         Docker network to monitor
 
 DNS:
-  -i IP, --ip IP        IP for the DNS record
+  -i IP, --ip IP        default IP for the DNS records
   -d DOMAIN, --domain DOMAIN
                         domain/zone for the DNS record (default: 'docker')
   -w, --prepend_www     add 'www' subdomains for all hostnames
@@ -133,22 +128,22 @@ dataset. This defaults to `3` and can be disabled by `0`.
 ### Swarm mode
 To operate sensibly in a Docker Swarm it's necessary to adopt a manager/agent
 configuration, with a single global manager instance being updated through an
-API interface by Agents running on each Swarm node.
+API by agents running on each Swarm node.
 
 To enable manager mode Docker Dnsmasq Updater should be run with the `--manager`
 argument.
 
 The manager can run anywhere, it doesn't need to be in the Swarm, so long as the
-Agents can access the API interface. If desired, the manager script can be run
-on the device running _dnsmasq_, using the `--local` argument to write to a hosts
-file on the local system.
+agents can access the API. If desired, the manager script can be run on the
+device running _dnsmasq_, using the `--local` argument to write to a hosts file
+on the local system.
 
 In manager mode the script won't listen to the Docker socket directly, only
 ingesting API data. Agents need to be running on all devices in the Swarm to
 catch all relevant container/service activity.
 
 #### Agent usage
-The Agent is a separate script, `dnsmasq_updater_agent.py`, to remove unnecessary
+The agent is a separate script, `dnsmasq_updater_agent.py`, to remove unnecessary
 overhead and minimize resource demands on the Swarm nodes. Configuration is
 similar to the main script, we're just aiming at the API of a manager instance
 instead of a remote SSH server.
@@ -203,12 +198,12 @@ in fact be a bad idea to do so. Choose one or the other, whichever you feel
 works best for you.
 
 In `--manager` mode the script can be run anywhere that's reachable from the
-Agents, they just need to be able to see the API. If running the API with a
+agents, they just need to be able to see the API. If running the API with a
 backend set by `--api_backend` (rather than using Bottle directly), that
 backend's module will need to be installed.
 
-If running on the same device as _dnsmasq_, the `--local` argument allows writing
-the hosts file directly to the local filesystem.
+If running on the same device as _dnsmasq_, the `--local` argument allows
+writing the hosts file directly to the local filesystem.
 
 ### Installation on Docker host
 Install requirements: `pip3 install -r requirements.txt`
@@ -243,11 +238,17 @@ services:
     deploy:
       mode: replicated
       replicas: 1
+      placement:
+        constraints:
+          # use a label to choose a specific Swarm node for the manager
+          # this ensures the volume for /app/keys will be present
+          - node.labels.dnsmasq-updater == true
+    hostname: dmu.swarm
     environment:
       - DMU_DEBUG=false
       - DMU_MODE=manager
       - DMU_DOMAIN=swarm
-      - DMU_IP=<loadbalancer_IP>
+      - DMU_IP=<frontend_IP>
       - DMU_KEY=/app/keys/id_rsa
       - DMU_LOGIN=<login>
       - DMU_PREPEND_WWW=true
@@ -267,7 +268,7 @@ services:
     environment:
       - DMU_DEBUG=false
       - DMU_NETWORK=traefik
-      - DMU_API_SERVER=tasks.dnsmasq-updater
+      - DMU_API_SERVER=dmu.swarm
       - DMU_API_PORT=8080
       - DMU_API_KEY=<api_key>
     volumes:
@@ -283,15 +284,20 @@ networks:
   traefik:
     external: true
 ```
-The compose file assumes there's a pre-existing Traefik service and network.
-As well as needing a load balancer in front of the services we want to access,
-the agents also use the _traefik_ network for communicating with the manager.
-Since they're all on that network to monitor it anyway, it doesn't seem
-necessary to create a dedicated _DMU_ network.
+This compose file assumes there's a pre-existing Traefik service and network.
 
-The manager service's `DMU_IP` will need to point to a load balancer, Traefik or
-otherwise. In a (hopefully near) future update it will be possible to override
-this default IP on a per-container or per-service basis by setting a label.
+Since, in this case, the agents are all connecting to the _traefik_ network
+to monitor it for activity, it's convenient to stick the manager on this network
+as well and use it for API communication.
+
+The manager's `DMU_IP` default IP should point to a frontend/reverse proxy,
+Traefik or otherwise. It's possible to override the default IP on a
+per-container/service basis with with a `dnsmasq.updater.ip` label on that
+container or service.
+
+To meet the manager's constraints, the `dnsmasq-updater.manager` label will need
+to be applied to the to the chosen node:
+<code>docker node update --label-add dnsmasq-updater.manager \<node\></code>
 
 See below for a detailed description of available
 [environment variables](#docker-environment-variables).
@@ -304,7 +310,7 @@ Python script is available, tagged `script`.
 
 The default `latest` tag points to the script version.
 
-The Agent images will be tagged `agent`.
+The agent images will be tagged `agent`.
 
 > [!NOTE]
 > After upgrading the Nuitka version, binary builds are currently larger than
@@ -338,7 +344,7 @@ environment variables.
 ##### Docker Dnsmasq Updater
 *   `DMU_MODE`           - operation mode (accepts: `standalone`, `manager`, default: `standalone`)
 *   `DMU_HOSTS_LOCATION` - location of hosts file (accepts: `local`, `remote`, default: `remote`)
-*   `DMU_IP`             - IP for the DNS records
+*   `DMU_IP`             - default IP for the DNS records
 *   `DMU_DOMAIN`         - domain/zone for the DNS records, defaults to `docker`
 *   `DMU_PREPEND_WWW`    - add _www_ subdomains to all hostnames, defaults to `False`
 *   `DMU_DOCKER_SOCKET`  - path to the docker socket (default: `unix://var/run/docker.sock`)
@@ -368,14 +374,14 @@ environment variables.
 
 ### Setup on dnsmasq server
 Docker Dnsmasq Updater won't track changes other software (i.e _dnsmasq_) might
-make to the remote hosts file. Thus, to avoid conflicts, it's best to give
-Docker Dnsmasq Updater it's own hosts file to use and either specify it as an
-additional hosts file to _dnsmasq_ (with the `-addn-hosts <file>` argument, or in
-_dnsmasq.conf_), or merge it into the main hosts file by some other mechanism.
+make to the hosts file. Thus, to avoid conflicts, it's best to give Docker
+Dnsmasq Updater it's own hosts file to use and either specify it as an
+additional hosts file to _dnsmasq_ (with the `-addn-hosts <file>` argument, or
+in _dnsmasq.conf_), or merge it into the main hosts file by some other mechanism.
 
-If your _dnsmasq_ server is a router with external storage attached it makes sense
-to keep the hosts file the updater generates there, to minimize writes to the
-router's onboard storage.
+If your _dnsmasq_ server is a router with external storage attached it makes
+sense to keep the hosts file the updater generates there, to minimize writes to
+the router's onboard storage.
 
 As an example, if you're using AsusWRT-Merlin/Entware, you can easily configure
 the router to include this external file by writing to _/opt/etc/hosts_ and
@@ -408,11 +414,12 @@ public key to _~/.ssh/authorized_keys_ on the router (possibly via the router's
 webUI rather than the shell).
 
 ### Setup for other Docker containers
-To enable Docker Dnsmasq Updater for an individual container there are two
+To enable Docker Dnsmasq Updater for an individual container there are three
 labels that can be set:
 
 *   `dnsmasq.updater.enable` - set this to "true"
 *   `dnsmasq.updater.host`   - set this to the hostname(s) you want to use
+*   `dnsmasq.updater.ip`     - override the default IP setting
 
 `dnsmasq.updater.host` can be a single hostname or a space-separated list.
 
@@ -424,6 +431,8 @@ If you choose to monitor a user-defined Docker network then
 `dnsmasq.updater.enable` isn't strictly necessary either. The updater assumes
 any container connecting to the monitored network is a container that you want
 working DNS for.
+
+Leave `dnsmasq.updater.ip` unset to use the default.
 
 Any defined `extra_hosts` will be given the IP from that definition.
 

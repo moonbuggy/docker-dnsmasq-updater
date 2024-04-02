@@ -155,10 +155,13 @@ class APIClientHandler():
         except urllib.error.HTTPError as err:
             self.logger.error('Error authenticating: %s', err)
 
-    def add_hosts(self, short_id, hostnames):
+    def add_hosts(self, short_id, hostnames, ip=None):
         """Add hosts via API /add."""
         post_data = json.dumps({'short_id': short_id,
-                                'hostnames': hostnames}).encode()
+                                'hostnames': hostnames,
+                                'ip': ip}).encode()
+
+        self.logger.debug('POST data: %s', post_data.decode())
 
         req_status = self.do_request('add', 'POST', post_data)
 
@@ -210,30 +213,41 @@ class DockerHandler():
                 self.swarm_mode = True
                 self.logger.info('Swarm mode detected.')
 
-    @classmethod
-    def get_hostnames(cls, container, get_extra_hosts=True):
-        """Return a list of hostnames for a container."""
-        hostnames = [container.attrs['Config']['Hostname']]
-        labels = container.labels
+    def get_hostnames(self, container, get_extra_hosts=True):
+        """Return a list of hostnames for a container or service."""
+        if self.swarm_mode:
+            hostnames = container.attrs['Spec']['Labels']['dnsmasq.updater.host'].split()
+        else:
+            hostnames = [container.attrs['Config']['Hostname']]
+            labels = container.labels
 
-        try:
-            hostnames.append(labels['dnsmasq.updater.host'])
-        except KeyError:
-            pass
+            try:
+                hostnames.append(labels['dnsmasq.updater.host'])
+            except KeyError:
+                pass
 
-        pattern = re.compile(r'Host\(`([^`]*)`\)')
+            pattern = re.compile(r'Host\(`([^`]*)`\)')
 
-        for key, value in labels.items():
-            if key.startswith('traefik.http.routers.'):
-                for match in pattern.finditer(value):
-                    hostnames.append(match.group(1))
+            for key, value in labels.items():
+                if key.startswith('traefik.http.routers.'):
+                    for match in pattern.finditer(value):
+                        hostnames.append(match.group(1))
 
-        if get_extra_hosts:
-            extra_hosts = container.attrs['HostConfig']['ExtraHosts']
-            if extra_hosts:
-                hostnames = hostnames + extra_hosts
+            if get_extra_hosts:
+                extra_hosts = container.attrs['HostConfig']['ExtraHosts']
+                if extra_hosts:
+                    hostnames = hostnames + extra_hosts
 
         return hostnames
+
+    def get_hostip(self, container):
+        """Get any IP address set with a label."""
+        try:
+            if self.swarm_mode:
+                return container.attrs['Spec']['Labels']['dnsmasq.updater.ip']
+            return container.labels['dnsmasq.updater.ip']
+        except KeyError:
+            return None
 
     def scan_runnning_containers(self):
         """Scan running containers, find any with dnsmasq.updater.enable."""
@@ -242,9 +256,10 @@ class DockerHandler():
         if self.swarm_mode:
             services = self.client.services.list(filters={"label": "dnsmasq.updater.enable"})
             for service in services:
-                names = service.attrs['Spec']['Labels']['dnsmasq.updater.host'].split()
+                names = self.get_hostnames(service)
+                ip = self.get_hostip(service)
                 self.logger.info('Found %s: %s', service.name, ', '.join(names))
-                if self.hosts_handler.add_hosts(service.short_id, names):
+                if self.hosts_handler.add_hosts(service.short_id, names, ip):
                     self.scan_success = True
 
         else:
@@ -252,8 +267,9 @@ class DockerHandler():
                 filters={"label": "dnsmasq.updater.enable", "status": "running"})
             for container in containers:
                 names = self.get_hostnames(container)
+                ip = self.get_hostip(container)
                 self.logger.info('Found %s: %s', container.name, ', '.join(names))
-                if self.hosts_handler.add_hosts(container.short_id, names):
+                if self.hosts_handler.add_hosts(container.short_id, names, ip):
                     self.scan_success = True
 
         self.logger.info('Finished scanning running containers.')
@@ -273,11 +289,16 @@ class DockerHandler():
                 'Cannot scan network: network \'%s\' does not exist.', self.params.network)
             return
 
-        for container in network.containers:
-            names = self.get_hostnames(container)
-            self.logger.info('Found %s: %s', container.name, ', '.join(names))
-            if self.hosts_handler.add_hosts(container.short_id, names):
-                self.scan_success = True
+        try:
+            for container in network.containers:
+                names = self.get_hostnames(container)
+                ip = self.get_hostip(container)
+                self.logger.info('Found %s: %s', container.name, ', '.join(names))
+                if self.hosts_handler.add_hosts(container.short_id, names, ip):
+                    self.scan_success = True
+
+        except docker.errors.NotFound as err:
+            self.logger.warning('No containers found on netwok %s: %s', self.params.network, err)
 
         self.logger.info('Finished scanning containers on \'%s\' network.', self.params.network)
 
@@ -290,7 +311,8 @@ class DockerHandler():
                 self.logger.debug('dnsmasq.updater.enable not found for %s', service.name)
                 return
             name = service.name
-            names = service.attrs['Spec']['Labels']['dnsmasq.updater.host'].split()
+            names = self.get_hostnames(service)
+            ip = self.get_hostip(service)
         else:
             if 'dnsmasq.updater.enable' not in event['Actor']['Attributes']:
                 return
@@ -298,6 +320,7 @@ class DockerHandler():
             short_id = container.short_id
             name = container.name
             names = self.get_hostnames(container)
+            ip = self.get_hostip(container)
 
         if event['status'] == 'start':
             event_verb = 'starting'
@@ -307,7 +330,7 @@ class DockerHandler():
         self.logger.info('Detected %s %s.', name, event_verb)
 
         if event['status'] == 'start':
-            self.hosts_handler.add_hosts(short_id, names)
+            self.hosts_handler.add_hosts(short_id, names, ip)
         elif event['status'] == 'stop':
             self.hosts_handler.del_hosts(short_id)
 
@@ -332,17 +355,19 @@ class DockerHandler():
                 short_id = container.labels['com.docker.swarm.service.id'][:10]
                 service = self.client.services.get(short_id)
                 name = service.name
-                names = service.attrs['Spec']['Labels']['dnsmasq.updater.host'].split()
+                names = self.get_hostnames(service)
+                ip = self.get_hostip(service)
             else:
                 short_id = container.short_id
                 name = container.name
                 names = self.get_hostnames(container)
+                ip = self.get_hostip(container)
 
             self.logger.info(
                 'Detected %s %s \'%s\' network.', name, event_verb, network)
 
             if event['Action'] == 'connect':
-                self.hosts_handler.add_hosts(short_id, names)
+                self.hosts_handler.add_hosts(short_id, names, ip)
             elif event['Action'] == 'disconnect':
                 self.hosts_handler.del_hosts(short_id)
 
@@ -355,11 +380,9 @@ class DockerHandler():
         # elif (event['Type'] == 'network'):
         #     self.logger.debug('Network event: %s', event)
 
-        # trigger on container start/stop
         if (event['Type'] == 'container') and (event['status'] in {'start', 'stop'}):
             self.handle_container_event(event)
 
-        # trigger on network connect/disconnect
         elif (event['Type'] == 'network') and \
             (self.params.network in event['Actor']['Attributes']['name']) \
                 and (event['Action'] in {'connect', 'disconnect'}):
