@@ -184,7 +184,7 @@ API:
 The `--api_key` argument is a string and needs to match the same on the manager.
 
 ## Setup
-Docker Dnsmasq Updater requires at least Python 3.6 and the _bottle_,
+Docker Dnsmasq Updater requires at least Python 3.10 and the _bottle_,
 _bottlejwt_, _docker_, _paramiko_ and _python_hosts_ modules.
 
 Docker Dnsmasq Updater Agent requires only the _docker_ module.

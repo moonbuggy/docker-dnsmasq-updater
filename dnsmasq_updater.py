@@ -382,6 +382,7 @@ class HostsHandler():
         across multiple IPs.
         """
         parsed_hostnames = self.parse_hostnames(hostnames)
+        self.logger.debug('Parsed hostnames: %s', json.dumps(parsed_hostnames, indent=4))
         parsed_items = parsed_hostnames.items()
 
         if not parsed_items:
@@ -402,8 +403,9 @@ class HostsHandler():
                 self.logger.info('Added host(s): %s',
                                  ', '.join(sum(parsed_hostnames.values(), [])))
 
-            except ValueError:
+            except ValueError as err:
                 self.logger.info('Host already exists, nothing to add.')
+                self.logger.debug(err)
 
         return parsed_items
 
@@ -505,13 +507,14 @@ class APIServerHandler(Bottle):
     def add_hosts(self, auth):
         """Add new hosts."""
         self.logger.debug('add_hosts: %s', request.json)
-        self.hosts_handler.add_hosts(
-            request.json['short_id'], request.json['hostnames'], request.json['ip'])
+        self.hosts_handler.add_hosts(request.json['short_id'],
+                                     request.json['hostnames'],
+                                     request.json.get('ip', None))
         return auth
 
     def del_hosts(self, short_id):
         """Delete hosts."""
-        self.logger.debug('del_hosts: %s', request.json)
+        self.logger.debug('del_hosts: %s', short_id)
         self.hosts_handler.del_hosts(short_id)
         return HTTPResponse(status=204)
 
@@ -540,6 +543,7 @@ class DockerHandler():
         self.hosts_handler = hosts_handler
         self.scan_success = False
         self.swarm_mode = False
+        self.swarm_manager = False
 
         if self.params.ready_fd == '':
             self.ready_fd = False
@@ -548,23 +552,35 @@ class DockerHandler():
 
     def get_client(self):
         """Create the Docker client object."""
-        self.logger.debug('docker socket: %s', self.params.docker_socket)
         try:
             self.client = docker.DockerClient(base_url=self.params.docker_socket)
         except docker.errors.DockerException as err:
-            self.logger.error('Could not open Docker socket. Halting.')
+            self.logger.error('Could not open Docker socket at %s. Exiting.',
+                              self.params.docker_socket)
             self.logger.debug('Error: %s', err)
             sys.exit(1)
-        else:
-            self.logger.info('Connected to Docker socket.')
-            if self.client.swarm.attrs:
+
+        self.logger.info('Connected to Docker socket.')
+        swarm_status = self.client.info()['Swarm']['LocalNodeState']
+        match swarm_status:
+            case 'inactive':
+                self.logger.info('Docker standalone detected.')
+            case 'active':
                 self.swarm_mode = True
-                self.logger.info('Swarm mode detected.')
+                if self.client.info()['Swarm']['ControlAvailable']:
+                    self.logger.info('Docker Swarm manager detected.')
+                    self.swarm_manager = True
+                else:
+                    self.logger.info('Docker Swarm node detected.')
+            case _:
+                self.logger.error('Swarm detection failed: %s', swarm_status)
+                sys.exit(1)
 
     def get_hostnames(self, container, get_extra_hosts=True):
         """Return a list of hostnames for a container or service."""
         if self.swarm_mode:
-            hostnames = container.attrs['Spec']['Labels']['dnsmasq.updater.host'].split()
+            # hostnames = container.attrs['Spec']['Labels']['dnsmasq.updater.host'].split()
+            hostnames = [container.attrs['Spec']['Labels']['dnsmasq.updater.host']]
         else:
             hostnames = [container.attrs['Config']['Hostname']]
             labels = container.labels
@@ -653,8 +669,10 @@ class DockerHandler():
     def handle_container_event(self, event):
         """Handle a container event."""
         if self.swarm_mode:
-            short_id = event['Actor']['Attributes']['com.docker.swarm.service.id'][:10]
-            service = self.client.services.get(short_id)
+            # service_id = event['Actor']['Attributes']['com.docker.swarm.service.id'][:10]
+            # service = self.client.services.get(service_id)
+            service = self.client.services.get(event['Actor']['Attributes']['com.docker.swarm.service.id'])
+            short_id = service.short_id
             if 'dnsmasq.updater.enable' not in service.attrs['Spec']['Labels']:
                 self.logger.debug('dnsmasq.updater.enable not found for %s', service.name)
                 return
@@ -700,8 +718,10 @@ class DockerHandler():
                 event_verb = 'disconnecting from'
 
             if self.swarm_mode:
-                short_id = container.labels['com.docker.swarm.service.id'][:10]
-                service = self.client.services.get(short_id)
+                # short_id = container.labels['com.docker.swarm.service.id'][:10]
+                # service = self.client.services.get(short_id)
+                service = self.client.services.get(container.labels['com.docker.swarm.service.id'])
+                short_id = service.short_id
                 name = service.name
                 names = self.get_hostnames(service)
                 ip = self.get_hostip(service)
