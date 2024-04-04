@@ -101,12 +101,13 @@ Remote hosts file (needed by --remote):
                         password for the dnsmasq server OR for an encrypted SSH key
 
 API server (needed by --manager):
+  --api_address PORT    address for API to listen on (default: '0.0.0.0')
   --api_port PORT       port for API to listen on (default: '8080')
   --api_key KEY         API access key
   --api_backend STRING  API backend (refer to Bottle module docs for details)
 ```
 
-Any command line parameters take precedence over settings in `dnsmasq_updater.conf`.
+Any command line parameters take precedence over settings in _dnsmasq_updater.conf_.
 
 The SSH connection requires either a login/password combination or a login/key
 combination. If using a key that is encrypted any password parameter supplied
@@ -130,20 +131,24 @@ To operate sensibly in a Docker Swarm it's necessary to adopt a manager/agent
 configuration, with a single global manager instance being updated through an
 API by agents running on each Swarm node.
 
-To enable manager mode Docker Dnsmasq Updater should be run with the `--manager`
-argument.
+The main _dnsmasq_updater.py_ script will not run in a Swarm environment in
+the default `--standalone` mode. Manager mode must be enabled with the
+`--manager` argument on the command line or the `mode` value in the config file.
 
-The manager can run anywhere, it doesn't need to be in the Swarm, so long as the
-agents can access the API. If desired, the manager script can be run on the
-device running _dnsmasq_, using the `--local` argument to write to a hosts file
-on the local system.
+Conversely, the Agent _will_ run on standalone Docker hosts, so it's possible to
+run multiple standalone hosts (and/or Swarms) through a single manager instance.
 
 In manager mode the script won't listen to the Docker socket directly, only
 ingesting API data. Agents need to be running on all devices in the Swarm to
 catch all relevant container/service activity.
 
+The manager instance can run anywhere, it doesn't need to be in the Swarm, so
+long as the Agents can access the API. If desired, the manager script can be
+run on the device running _dnsmasq_, using the `--local` argument to write to a
+hosts file on the local system.
+
 #### Agent usage
-The agent is a separate script, `dnsmasq_updater_agent.py`, to remove unnecessary
+The Agent is a separate script, _dnsmasq_updater_agent.py_, to remove unnecessary
 overhead and minimize resource demands on the Swarm nodes. Configuration is
 similar to the main script, we're just aiming at the API of a manager instance
 instead of a remote SSH server.
@@ -198,7 +203,7 @@ in fact be a bad idea to do so. Choose one or the other, whichever you feel
 works best for you.
 
 In `--manager` mode the script can be run anywhere that's reachable from the
-agents, they just need to be able to see the API. If running the API with a
+Agents, they just need to be able to see the API. If running the API with a
 backend set by `--api_backend` (rather than using Bottle directly), that
 backend's module will need to be installed.
 
@@ -208,9 +213,9 @@ writing the hosts file directly to the local filesystem.
 ### Installation on Docker host
 Install requirements: `pip3 install -r requirements.txt`
 
-Put `dnsmasq_updater.py` anywhere in the path.
+Put _dnsmasq_updater.py_ anywhere in the path.
 
-Put `dnsmasq_updater.conf` in `/etc/` or in the same directory as the script
+Put _dnsmasq_updater.conf_ in `/etc/` or in the same directory as the script
 (which takes precedence over any config file in `/etc/`).
 
 ### Installation of Docker container(s)
@@ -225,7 +230,7 @@ docker run -d \
 If you're using a config file instead of environment variables (see below)
 you'll need to persist it with `-v <host path>:/app/conf/dnsmasq_updater.conf`.
 If you're using an SSH key for authentication you can persist and use the
-`/app/keys/` folder.
+_/app/keys/_ folder.
 
 #### Swarm deployment
 ##### docker-compose.yml
@@ -286,7 +291,7 @@ networks:
 ```
 This compose file assumes there's a pre-existing Traefik service and network.
 
-Since, in this case, the agents are all connecting to the _traefik_ network
+Since, in this case, the Agents are all connecting to the _traefik_ network
 to monitor it for activity, it's convenient to stick the manager on this network
 as well and use it for API communication.
 
@@ -310,7 +315,7 @@ Python script is available, tagged `script`.
 
 The default `latest` tag points to the script version.
 
-The agent images will be tagged `agent`.
+The Agent images will be tagged `agent`.
 
 > [!NOTE]
 > After upgrading the Nuitka version, binary builds are currently larger than
@@ -331,9 +336,9 @@ available, in the form `alpine-<arch>` and `alpine-binary-<arch>` for the
 `script` and `binary` builds respectively.
 
 > [!NOTE]
-> I'm only able to test on `amd64` and `armv7`. Both `script` and `binary` builds
-> currently work on these architectures. The `script` build is more portable and
-> less likely to have problems on un-tested architectures (although the `binary`
+> I'm only able to test on `amd64`, `armv7` and `arm64`. Both `script` and `binary`
+> builds currently work on these architectures. The `script` build is more portable
+> and less likely to have problems on un-tested architectures (although the `binary`
 > builds _should_ be fine as well). If `binary` doesn't work on a particular piece
 > of hardware, `script` would be worth trying.
 
@@ -357,6 +362,7 @@ environment variables.
 *   `DMU_HOSTS_FILE`     - full path to the hosts file to update on the _dnsmasq_ server
 *   `DMU_RESTART_CMD`    - command to execute to restart/update dnsmasq, defaults to `service restart_dnsmasq`
 *   `DMU_DELAY`          - delay in seconds before writing remote hosts file, defaults to `10`
+*   `DMU_API_ADDRESS`    - address for API to listen on (default: '0.0.0.0')
 *   `DMU_API_PORT`       - port for API to listen on (default: '8080')
 *   `DMU_API_KEY`        - API access key
 *   `DMU_DEBUG`          - set `True` to enable debug log output
@@ -419,7 +425,7 @@ labels that can be set:
 
 *   `dnsmasq.updater.enable` - set this to "true"
 *   `dnsmasq.updater.host`   - set this to the hostname(s) you want to use
-*   `dnsmasq.updater.ip`     - override the default IP setting
+*   `dnsmasq.updater.ip`     - override the default IP setting (Agent only)
 
 `dnsmasq.updater.host` can be a single hostname or a space-separated list.
 
@@ -451,7 +457,7 @@ This scenario provides the easiest/laziest configuration route, with no specific
 Docker Dnsmasq Updater configuration required on containers.
 
 #### Redirecting 'www' subdomains
-The `--prepend_www` funtionality was added primarily for robustness. Sometimes
+The `--prepend_www` functionality was added primarily for robustness. Sometimes
 people add `www.` to URLs for no good reason, then don't know what to make of
 the ensuing DNS lookup error messages in their browser.
 
