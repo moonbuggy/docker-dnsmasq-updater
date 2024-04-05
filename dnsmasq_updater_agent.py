@@ -45,13 +45,14 @@ STDOUT_HANDLER.setFormatter(
     Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
 
 
-def signal_handler(_sig, _frame):
+def signal_handler(sig, _frame):
     """Handle SIGINT cleanly."""
-    print('\nSignal interrupt. Exiting.')
+    print('\nCaught signal:', sig, '\n')
     sys.exit(0)
 
 
 signal.signal(signal.SIGINT, signal_handler)
+signal.signal(signal.SIGTERM, signal_handler)
 
 loggers: Dict[str, str] = {}
 
@@ -89,15 +90,14 @@ class APIClientHandler():
         self.logger = get_logger(self.__class__.__name__, self.params.log_level)
         self.api_url = 'http://' + self.params.api_server + ':' + self.params.api_port + '/'
 
-        api_status_url = self.api_url + 'status'
         while True:
             try:
-                with urllib.request.urlopen(api_status_url):
+                with urllib.request.urlopen(self.api_url + 'status'):
                     self.logger.info('API connection established.')
                     break
             except (urllib.error.URLError, ConnectionRefusedError, ConnectionResetError):
                 self.logger.warning('Could not connect to API at %s. Retrying in %s seconds..',
-                                    api_status_url, self.params.api_retry)
+                                    self.api_url, self.params.api_retry)
                 time.sleep(self.params.api_retry)
 
         self.client_id = 'user'
@@ -156,11 +156,16 @@ class APIClientHandler():
         except urllib.error.HTTPError as err:
             self.logger.error('Error authenticating: %s', err)
 
-    def add_hosts(self, short_id, hostnames, ip=None):
-        """Add hosts via API /add."""
+    def add_hosts(self, short_id, hostnames):
+        """
+        Add hosts via API /add.
+
+        Hostnames may include an IP address to override the manager's default
+        address, in the form '<hostname>:<address>'.
+        """
         post_data = json.dumps({'short_id': short_id,
                                 'hostnames': hostnames,
-                                'ip': ip}).encode()
+                                'from': self.params.this_host}).encode()
 
         self.logger.debug('add_hosts: %s', post_data.decode())
 
@@ -179,6 +184,18 @@ class APIClientHandler():
             self.logger.info('Deleted: %s', short_id)
         else:
             self.logger.error('Could not delete hosts: %s: %s', short_id, req_status)
+
+    def clean_hosts(self):
+        """
+        Delete all hosts for this node when exiting.
+
+        This assumes the services go down when this Agent goes down, which isn't
+        necearrily true but since, at the moment, the manager doesn't do any
+        garbage collection of it's own we're better off erring on the side of
+        removing working hostnames over preserving non-working hostnames.
+        """
+        self.logger.info('Cleaning hosts.')
+        self.del_hosts(self.params.this_host)
 
 
 class DockerHandler():
@@ -214,6 +231,7 @@ class DockerHandler():
             sys.exit(1)
 
         self.logger.info('Connected to Docker socket.')
+
         swarm_status = self.client.info()['Swarm']['LocalNodeState']
         match swarm_status:
             case 'inactive':
@@ -230,12 +248,15 @@ class DockerHandler():
                 sys.exit(1)
 
     def get_hostnames(self, data_object):
-        """Return a list of hostnames for a container or service."""
-        if 'Spec' in data_object.attrs:
-            hostnames = \
-                data_object.attrs['Spec']['TaskTemplate']['ContainerSpec']['Hostname'].split()
+        """
+        Return a list of hostnames for a container or service.
+
+        Include any IP address override in the form '<hostname>:<address>'
+        """
+        try:
+            hostnames = data_object.attrs['Spec']['TaskTemplate']['ContainerSpec']['Hostname'].split()
             labels = data_object.attrs['Spec']['Labels']
-        else:
+        except KeyError:
             hostnames = data_object.attrs['Config']['Hostname'].split()
             labels = data_object.labels
 
@@ -245,11 +266,14 @@ class DockerHandler():
             pass
 
         pattern = re.compile(r'Host\(`([^`]*)`\)')
-
         for key, value in labels.items():
             if key.startswith('traefik.http.routers.'):
                 for match in pattern.finditer(value):
                     hostnames.append(match.group(1))
+
+        ip = self.get_hostip(data_object)
+        if ip is not None:
+            hostnames = [x + ':' + ip for x in hostnames]
 
         try:
             extra_hosts = data_object.attrs['HostConfig']['ExtraHosts']
@@ -264,8 +288,6 @@ class DockerHandler():
     def get_hostip(self, data_object):
         """Get any IP address set with a label."""
         try:
-            if self.swarm_mode:
-                return data_object.attrs['Spec']['Labels']['dnsmasq.updater.ip']
             return data_object.labels['dnsmasq.updater.ip']
         except KeyError:
             return None
@@ -273,18 +295,6 @@ class DockerHandler():
     def scan_runnning_containers(self):
         """Scan running containers, find any with dnsmasq.updater.enable."""
         self.logger.info('Started scanning running containers.')
-
-        if self.swarm_mode == 'manager':
-            try:
-                services = self.client.services.list(filters={"label": "dnsmasq.updater.enable"})
-            except docker.errors.APIError as err:
-                self.logger.warning('Could not scan running services: %s', err)
-            else:
-                for service in services:
-                    names = self.get_hostnames(service)
-                    ip = self.get_hostip(service)
-                    self.logger.info('Found %s: %s', service.name, names)
-                    self.hosts_handler.add_hosts(service.short_id, names, ip)
 
         try:
             containers = self.client.containers.list(
@@ -294,17 +304,11 @@ class DockerHandler():
             return
 
         for container in containers:
-            try:
-                short_id = container.labels['com.docker.swarm.service.id'][:12]
-                name = container.labels['com.docker.swarm.service.name']
-            except KeyError:
-                short_id = container.short_id
-                name = container.name
-
             hostnames = self.get_hostnames(container)
-            self.logger.info('Found %s: %s', name, ', '.join(hostnames))
-            self.hosts_handler.add_hosts(short_id, hostnames,
-                                         self.get_hostip(container))
+            if hostnames is None:
+                continue
+            self.logger.info('Found %s: %s', container.name, ', '.join(hostnames))
+            self.hosts_handler.add_hosts(container.short_id, hostnames)
 
         self.logger.info('Finished scanning running containers.')
 
@@ -326,15 +330,19 @@ class DockerHandler():
                 continue
 
             hostnames = self.get_hostnames(container_object)
+
+            # don't add self based on a network scan, since we're probably just
+            # using the network as a convenient for the API comms
+            if self.params.this_host in hostnames:
+                continue
+
             self.logger.info('Found %s: %s', container_object.name, ', '.join(hostnames))
-            self.hosts_handler.add_hosts(container_object.short_id, hostnames,
-                                         self.get_hostip(container_object))
+            self.hosts_handler.add_hosts(container_object.short_id, hostnames)
 
         self.logger.info('Finished scanning containers on \'%s\' network.', self.params.network)
 
     def handle_container_event(self, event):
         """Handle a container event."""
-        # self.logger.debug('event: %s', json.dumps(event, indent=4))
         try:
             data_object = self.client.services.get(
                 event['Actor']['Attributes']['com.docker.swarm.service.id'])
@@ -347,20 +355,20 @@ class DockerHandler():
             return
 
         try:
-            short_id = data_object.labels['com.docker.swarm.service.id'][:12]
             name = data_object.labels['com.docker.swarm.service.name']
         except (AttributeError, KeyError):
-            short_id = data_object.short_id[:12]
             name = data_object.name
+
+        short_id = data_object.short_id[:12]
 
         self.logger.info('Detected %s %s.', name, self.event_verbs[event['status']])
 
         if event['status'] == 'stop':
             self.hosts_handler.del_hosts(short_id)
         elif event['status'] == 'start':
-            self.hosts_handler.add_hosts(short_id,
-                                         self.get_hostnames(data_object),
-                                         self.get_hostip(data_object))
+            hostnames = self.get_hostnames(data_object)
+            if hostnames is not None:
+                self.hosts_handler.add_hosts(short_id, hostnames)
 
     def handle_network_event(self, event):
         """Handle a network event."""
@@ -377,11 +385,11 @@ class DockerHandler():
             data_object = container
 
         try:
-            short_id = data_object.labels['com.docker.swarm.service.id'][:12]
             name = data_object.labels['com.docker.swarm.service.name']
         except KeyError:
-            short_id = data_object.short_id[:12]
             name = data_object.name
+
+        short_id = data_object.short_id[:12]
 
         self.logger.info('Detected %s %s \'%s\' network.', name,
                          self.event_verbs[event['Action']],
@@ -390,8 +398,9 @@ class DockerHandler():
         if event['Action'] == 'disconnect':
             self.hosts_handler.del_hosts(short_id)
         elif event['Action'] == 'connect':
-            self.hosts_handler.add_hosts(short_id, self.get_hostnames(data_object),
-                                         self.get_hostip(data_object))
+            hostnames = self.get_hostnames(data_object)
+            if hostnames is not None:
+                self.hosts_handler.add_hosts(short_id, hostnames)
 
     def handle_events(self, event):
         """Monitor the docker socket for relevant container and network events."""
@@ -449,7 +458,9 @@ class ConfigHandler():
             'api_key': '',
             'api_retry': 10,
             'log_level': self.log_level,
-            'ready_fd': ''
+            'ready_fd': '',
+            'this_host': os.environ['HOSTNAME'],
+            'clean_on_exit': True
         }
 
         self.args = []
@@ -542,6 +553,9 @@ class ConfigHandler():
         api_group.add_argument(
             '-R', '--api_retry', action='store', metavar='SECONDS', type=int,
             help='delay in seconds before retrying failed connection (default: \'%(default)s\')')
+        api_group.add_argument(
+            '--clean_on_exit', action=argparse.BooleanOptionalAction,
+            help='delete this device\'s hosts from the API when the Agent shuts down (default: enabled)')
         parser.add_argument(
             '--ready_fd', action='store', metavar='INT',
             help='set to an integer to enable signalling readiness by writing '
@@ -570,15 +584,19 @@ class ConfigHandler():
 def main():
     """Do all the things."""
     config = ConfigHandler()
-    args = config.get_args()
+    args = vars(config.get_args())
 
-    hosts_handler = APIClientHandler(**vars(args))
-    data_handler = DockerHandler(hosts_handler, **vars(args))
+    hosts_handler = APIClientHandler(**args)
+    data_handler = DockerHandler(hosts_handler, **args)
 
     try:
         data_handler.start_monitor()
     except SystemExit:
         pass
+    finally:
+        if args['clean_on_exit'] is not None:
+            hosts_handler.clean_hosts()
+        print('Exiting.')
 
 
 if __name__ == '__main__':

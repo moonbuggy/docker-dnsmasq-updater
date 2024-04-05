@@ -20,7 +20,7 @@ if env | grep -q 'DMU_'; then
 
 	[ ! -z "${DMU_PREPEND_WWW}" ] \
 		&& sed -E "s!^#?prepend_www.*!prepend_www=${DMU_PREPEND_WWW}!" -i $CONFIG_FILE \
-		|| sed -E "s!^#?prepend_www.*!prepend_www=False!" -i $CONFIG_FILE \
+		|| sed -E "s!^#?prepend_www.*!prepend_www=False!" -i $CONFIG_FILE
 
 	[ ! -z "${DMU_PORT}" ] \
 		&& { sed "s!^port.*!port=${DMU_PORT}!" -i $CONFIG_FILE; } \
@@ -51,6 +51,10 @@ if env | grep -q 'DMU_'; then
 	[ ! -z "${DMU_API_KEY}" ] && sed "s!^api_key.*!api_key=${DMU_API_KEY}!" -i $CONFIG_FILE
 	[ ! -z "${DMU_API_RETRY}" ] && sed "s!^api_retry.*!api_retry=${DMU_API_RETRY}!" -i $CONFIG_FILE
 	[ ! -z "${DMU_API_BACKEND}" ] && sed "s!^api_backend.*!api_backend=${DMU_API_BACKEND}!" -i $CONFIG_FILE
+
+	[ ! -z "${DMU_CLEAN_ON_EXIT}" ] \
+		&& sed -E "s!^#?clean_on_exit.*!clean_on_exit=${DMU_CLEAN_ON_EXIT}!" -i $CONFIG_FILE \
+		|| sed -E "s!^#?clean_on_exit.*!clean_on_exit=False!" -i $CONFIG_FILE
 
 	sed "s!^ready_fd.*!ready_fd=5!" -i $CONFIG_FILE
 fi

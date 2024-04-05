@@ -140,7 +140,7 @@ run multiple standalone hosts (and/or Swarms) through a single manager instance.
 
 In manager mode the script won't listen to the Docker socket directly, only
 ingesting API data. Agents need to be running on all devices in the Swarm to
-catch all relevant container/service activity.
+catch all relevant container and network activity.
 
 The manager instance can run anywhere, it doesn't need to be in the Swarm, so
 long as the Agents can access the API. If desired, the manager script can be
@@ -185,6 +185,10 @@ API:
   -R SECONDS, --api_retry SECONDS
                         delay in seconds before retrying failed connection
                         (default: '10')
+  --clean_on_exit, --no-clean_on_exit
+                        delete this device's hosts from the API when the Agent
+                        shuts down (default: enabled)
+
 ```
 The `--api_key` argument is a string and needs to match the same on the manager.
 
@@ -297,8 +301,8 @@ as well and use it for API communication.
 
 The manager's `DMU_IP` default IP should point to a frontend/reverse proxy,
 Traefik or otherwise. It's possible to override the default IP on a
-per-container/service basis with with a `dnsmasq.updater.ip` label on that
-container or service.
+per-container basis with with a `dnsmasq.updater.ip` label on individual
+containers.
 
 To meet the manager's constraints, the `dnsmasq-updater.manager` label will need
 to be applied to the to the chosen node:
@@ -329,18 +333,18 @@ Tags may be prefixed with `<version>-` to get a specific version, or just use a
 version number by itself to get `<version>-script`.
 
 #### Architectures
-The main `latest`, `<version>`, `binary` and `script` tags should automatically
-provide images compatible with `amd64`, `arm`/`armv7`, `armhf`/`armv6`, `arm64`,
-`386` and `ppc64le` platforms. Tags for specific single-arch images are
-available, in the form `alpine-<arch>` and `alpine-binary-<arch>` for the
-`script` and `binary` builds respectively.
+The main `latest`, `<version>`, `script`, `binary` and `agent` tags should
+automatically provide images compatible with `amd64`, `arm`/`armv7`,
+`armhf`/`armv6`, `arm64`, `386` and `ppc64le` platforms. Tags for specific
+single-arch images are available, in the form `alpine-<arch>` and
+`alpine-binary-<arch>` for the `script` and `binary` builds respectively.
 
 > [!NOTE]
-> I'm only able to test on `amd64`, `armv7` and `arm64`. Both `script` and `binary`
-> builds currently work on these architectures. The `script` build is more portable
-> and less likely to have problems on un-tested architectures (although the `binary`
-> builds _should_ be fine as well). If `binary` doesn't work on a particular piece
-> of hardware, `script` would be worth trying.
+> I'm only able to test on `amd64`, `armv7` and `arm64`. The `script`, `binary`
+> and `agent` builds currently work on these architectures. The `script` build is
+> more portable and less likely to have problems on un-tested architectures
+> (although the `binary`builds _should_ be fine as well). If `binary` doesn't work
+> on a particular piece of hardware, `script` would be worth trying.
 
 #### Docker environment variables
 Almost all the command line parameters (see [Usage](#usage)) can be set with
@@ -375,6 +379,7 @@ environment variables.
 *   `DMU_API_PORT`       - port the API is listening on (default: '8080')
 *   `DMU_API_KEY`        - API access key
 *   `DMU_API_RETRY`      - delay in seconds before retrying failed connection (default: '10')
+*   `DMU_CLEAN_ON_EXIT`  - delete this device's hosts from the API when the Agent shuts down (default: `True`)
 *   `DMU_DEBUG`          - set `True` to enable debug log output
 *   `TZ`		             - set timezone
 
@@ -499,11 +504,10 @@ Python runtime state: core initialized
 PermissionError: [Errno 1] Operation not permitted
 ```
 
-This is caused by
-[a bug in libseccomp](https://github.com/moby/moby/issues/40734) and can be
-resolved by either updating libseccomp on the Docker _host_ (to at least 2.4.x)
-or running the container with `--security-opt seccomp=unconfined` set in the
-`docker run` command.
+This is caused by [a bug in libseccomp](https://github.com/moby/moby/issues/40734)
+and can be resolved by either updating libseccomp on the Docker _host_ (to at
+least 2.4.x) or running the container with `--security-opt seccomp=unconfined`
+set in the `docker run` command.
 
 On a Debian-based host (e.g. Armbian) it may be necessary to add the backports
 repo for apt to find the newest version.
@@ -515,7 +519,6 @@ Docker Hub: <https://hub.docker.com/r/moonbuggy2000/dnsmasq-updater>
 
 ### Resources
 Pre-built Python musl wheels: <https://github.com/moonbuggy/docker-python-musl-wheels>
-
 
 [AsusWRT-Merlin]: https://www.asuswrt-merlin.net/
 [Entware]: https://entware.net/about.html

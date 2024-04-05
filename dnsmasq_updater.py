@@ -61,13 +61,14 @@ STDOUT_HANDLER.setFormatter(
     Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
 
 
-def signal_handler(_sig, _frame):
+def signal_handler(sig, _frame):
     """Handle SIGINT cleanly."""
-    print('\nSignal interrupt. Exiting.')
+    print('\nCaught signal:', sig, '\n')
     sys.exit(0)
 
 
 signal.signal(signal.SIGINT, signal_handler)
+signal.signal(signal.SIGTERM, signal_handler)
 
 loggers: Dict[str, str] = {}
 
@@ -373,28 +374,30 @@ class HostsHandler():
 
         return dict([host_ip, sorted(hostnames)] for host_ip, hostnames in hostname_dict.items())
 
-    def add_hosts(self, short_id, hostnames, ip=None, do_write=True):
+    def add_hosts(self, short_id, hostnames, agent_id=None, do_write=True):
         """
         Create host's HostsEntry, add it to Hosts object. Optionally write out.
 
         Setting the comment to a unique string (like a contaienr's 'short_id')
         makes it easy to delete the correct hosts (and only the correct hosts)
-        across multiple IPs.
+        across multiple IPs. Including an identifier for the particular Agent
+        that added the host allows esay deletion for all that Agent's hosts if
+        the Agent goes down.
         """
         parsed_hostnames = self.parse_hostnames(hostnames)
-        self.logger.debug('Parsed hostnames: %s', json.dumps(parsed_hostnames, indent=4))
         parsed_items = parsed_hostnames.items()
 
         if not parsed_items:
             self.logger.debug('Added host(s): no hostnames to add: %s', short_id)
         else:
+            id_string = short_id
+            if agent_id is not None:
+                id_string = id_string + '.' + agent_id
             try:
                 for host_ip, names in parsed_items:
-                    if ip:
-                        host_ip = ip
                     self.logger.debug('Adding: %s: %s', host_ip, ', '.join(names))
                     hostentry = HostsEntry(entry_type='ipv4', address=host_ip,
-                                           names=names, comment=short_id)
+                                           names=names, comment=id_string)
                     self.hosts.add([hostentry], force=True, allow_address_duplication=True)
 
                 if do_write:
@@ -409,19 +412,19 @@ class HostsHandler():
 
         return parsed_items
 
-    def del_hosts(self, comment):
-        """Delete hosts with matching comment."""
+    def del_hosts(self, id_string):
+        """Delete hosts with a comment matching id_string."""
         hostnames = sum([entry.names for entry in self.hosts.entries
-                         if entry.comment == comment], [])
+                         if id_string in entry.comment], [])
 
         if not hostnames:
             self.logger.debug(
-                'Deleting host(s): no hostnames to delete: %s', comment)
+                'Deleting host(s): no hostnames to delete: %s', id_string)
         else:
             self.logger.info('Deleting host(s): %s', ', '.join(hostnames))
             self.hosts.entries = list(
                 set(self.hosts.entries) - {entry for entry in self.hosts.entries
-                                           if entry.comment == comment}
+                                           if id_string in entry.comment}
             )
 
             self.queue_write()
@@ -509,7 +512,7 @@ class APIServerHandler(Bottle):
         self.logger.debug('add_hosts: %s', request.json)
         self.hosts_handler.add_hosts(request.json['short_id'],
                                      request.json['hostnames'],
-                                     request.json.get('ip', None))
+                                     request.json.get('from', None))
         return auth
 
     def del_hosts(self, short_id):
@@ -583,7 +586,11 @@ class DockerHandler():
                 sys.exit(1)
 
     def get_hostnames(self, container):
-        """Return a list of hostnames for a container or service."""
+        """
+        Return a list of hostnames for a container or service.
+
+        Include any IP address override in the form '<hostname>:<address>'
+        """
         hostnames = [container.attrs['Config']['Hostname']]
         labels = container.labels
 
@@ -598,6 +605,10 @@ class DockerHandler():
             if key.startswith('traefik.http.routers.'):
                 for match in pattern.finditer(value):
                     hostnames.append(match.group(1))
+
+        ip = self.get_hostip(container)
+        if ip is not None:
+            hostnames = [x + ':' + ip for x in hostnames]
 
         try:
             extra_hosts = container.attrs['HostConfig']['ExtraHosts']
@@ -620,13 +631,19 @@ class DockerHandler():
         """Scan running containers, find any with dnsmasq.updater.enable."""
         self.logger.info('Started scanning running containers.')
 
-        containers = self.client.containers.list(
-            filters={"label": "dnsmasq.updater.enable", "status": "running"})
+        try:
+            containers = self.client.containers.list(
+                filters={"label": "dnsmasq.updater.enable", "status": "running"})
+        except docker.errors.APIError as err:
+            self.logger.warning('Could not scan running containers: %s', err)
+            return
+
         for container in containers:
             hostnames = self.get_hostnames(container)
+            if hostnames is None:
+                continue
             self.logger.info('Found %s: %s', container.name, ', '.join(hostnames))
-            if self.hosts_handler.add_hosts(container.short_id, hostnames,
-                                            self.get_hostip(container), do_write=False):
+            if self.hosts_handler.add_hosts(container.short_id, hostnames, do_write=False):
                 self.scan_success = True
 
         self.logger.info('Finished scanning running containers.')
@@ -650,8 +667,7 @@ class DockerHandler():
 
             hostnames = self.get_hostnames(container_object)
             self.logger.info('Found %s: %s', container_object.name, ', '.join(hostnames))
-            if self.hosts_handler.add_hosts(container_object.short_id, hostnames,
-                                            self.get_hostip(container_object)):
+            if self.hosts_handler.add_hosts(container_object.short_id, hostnames):
                 self.scan_success = True
 
         self.logger.info('Finished scanning containers on \'%s\' network.', self.params.network)
@@ -670,9 +686,9 @@ class DockerHandler():
         if event['status'] == 'stop':
             self.hosts_handler.del_hosts(short_id)
         elif event['status'] == 'start':
-            self.hosts_handler.add_hosts(short_id,
-                                         self.get_hostnames(container),
-                                         self.get_hostip(container))
+            hostnames = self.get_hostnames(container)
+            if hostnames is not None:
+                self.hosts_handler.add_hosts(short_id, hostnames)
 
     def handle_network_event(self, event):
         """Handle a network event."""
@@ -693,8 +709,7 @@ class DockerHandler():
             if event['Action'] == 'disconnect':
                 self.hosts_handler.del_hosts(short_id)
             elif event['Action'] == 'connect':
-                self.hosts_handler.add_hosts(short_id, self.get_hostnames(container),
-                                             self.get_hostip(container))
+                self.hosts_handler.add_hosts(short_id, self.get_hostnames(container))
 
     def handle_events(self, event):
         """Monitor the docker socket for relevant container and network events."""
@@ -974,20 +989,20 @@ class ConfigHandler():
 def main():
     """Do all the things."""
     config = ConfigHandler()
-    args = config.get_args()
+    args = vars(config.get_args())
 
     with tempfile.NamedTemporaryFile(delete=False) as temp_file:
-        if args.location == 'local':
-            output_handler = LocalHandler(temp_file, **vars(args))
+        if args['location'] == 'local':
+            output_handler = LocalHandler(temp_file, **args)
         else:
-            output_handler = RemoteHandler(temp_file, **vars(args))
+            output_handler = RemoteHandler(temp_file, **args)
 
-        hosts_handler = HostsHandler(output_handler, **vars(args))
+        hosts_handler = HostsHandler(output_handler, **args)
 
-        if args.mode == 'manager':
-            input_handler = APIServerHandler(hosts_handler, **vars(args))
+        if args['mode'] == 'manager':
+            input_handler = APIServerHandler(hosts_handler, **args)
         else:
-            input_handler = DockerHandler(hosts_handler, **vars(args))
+            input_handler = DockerHandler(hosts_handler, **args)
 
         try:
             input_handler.start_monitor()
@@ -996,6 +1011,7 @@ def main():
         finally:
             hosts_handler.delayed_write.cancel()
             output_handler.delayed_put.cancel()
+            print('Exiting.')
 
 
 if __name__ == '__main__':
