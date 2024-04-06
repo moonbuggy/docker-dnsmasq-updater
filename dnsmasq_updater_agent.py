@@ -17,6 +17,7 @@ import time
 import re
 import urllib.request
 
+from threading import Timer
 from types import SimpleNamespace
 from typing import Dict
 
@@ -75,6 +76,38 @@ def get_logger(class_name, log_level):
     return logger
 
 
+class ResettableTimer():
+    """A resettable timer class."""
+
+    def __init__(self, delay, function):
+        """Initialize timing."""
+        self.running = False
+        self.delay = delay
+        self.function = function
+        self.timer = Timer(self.delay, self.function)
+
+    def __set(self):
+        self.timer = Timer(self.delay, self.function)
+
+    def start(self):
+        """If not running, start timer."""
+        if not self.running:
+            self.__set()
+            self.timer.start()
+            self.running = True
+
+    def cancel(self):
+        """If running, cancel timer."""
+        if self.running:
+            self.timer.cancel()
+            self.running = False
+
+    def reset(self):
+        """Reset timer."""
+        self.cancel()
+        self.start()
+
+
 class APIClientHandler():
     """
     Feed hosts data directly to the API.
@@ -92,8 +125,10 @@ class APIClientHandler():
 
         while True:
             try:
-                with urllib.request.urlopen(self.api_url + 'status'):
+                with urllib.request.urlopen(self.api_url + 'status') as resp:
+                    self.api_instance = resp.getheader('DMU-API-ID')
                     self.logger.info('API connection established.')
+                    self.logger.debug('set DMU-API-ID: %s', self.api_instance)
                     break
             except (urllib.error.URLError, ConnectionRefusedError, ConnectionResetError):
                 self.logger.warning('Could not connect to API at %s. Retrying in %s seconds..',
@@ -102,37 +137,14 @@ class APIClientHandler():
 
         self.client_id = 'user'
         self.token = False
-        self.get_jwt_token()
 
+        self.get_jwt_token()
         if not self.token:
             self.logger.error('No authentication token. Exiting.')
-            sys.exit()
+            sys.exit(1)
 
-    def do_request(self, path, method, data=None):
-        """
-        Make an HTTP request to the API.
-
-        An error from one of the HTTP requests means the API server or the link
-        to it has gone down. The easiest way to handle this is to exit() and let
-        Docker restart the node container, or let the init system restart the
-        script, allowing __init__() to run again and wait indefinitely for the
-        server to come back up.
-        """
-        request = urllib.request.Request(
-            self.api_url + path, data, method=method,
-            headers={"Content-Type": "application/json", 'Authorization': self.token}
-        )
-
-        try:
-            with urllib.request.urlopen(request) as resp:
-                return resp.status
-        except urllib.error.URLError as err:
-            self.logger.error('URLError: %s: %s', request.full_url, err.reason)
-        except ConnectionRefusedError as err:
-            self.logger.error('ConnectionRefusedError: %s: %s', request.full_url, err)
-
-        self.logger.error('Cannot reach API server. Exiting.')
-        sys.exit()
+        self.logger.debug('Starting status check timer.')
+        self.status_timer = ResettableTimer(self.params.api_status_timer, self.check_status)
 
     def get_jwt_token(self):
         """Get the JWT authentication token."""
@@ -156,6 +168,49 @@ class APIClientHandler():
         except urllib.error.HTTPError as err:
             self.logger.error('Error authenticating: %s', err)
 
+    def do_request(self, path, method='GET', data=None):
+        """
+        Make an HTTP request to the API.
+
+        An error from one of the HTTP requests means the API server or the link
+        to it has gone down. The easiest way to handle this is to exit() and let
+        Docker restart the Agent container, or let the init system restart the
+        script, allowing __init__() to run again and wait indefinitely for the
+        server to come back up.
+
+        Similarly, if the unique ID string from the API changes, assume the
+        manager has restarted and won't have the full data set so an exit() is
+        warranted.
+        """
+        request = urllib.request.Request(
+            self.api_url + path, data, method=method,
+            headers={"Content-Type": "application/json", 'Authorization': self.token}
+        )
+
+        try:
+            with urllib.request.urlopen(request) as resp:
+                id_string = resp.getheader('DMU-API-ID')
+                self.logger.debug('ID string: %s', id_string)
+
+                if id_string == self.api_instance:
+                    self.status_timer.reset()
+                    return resp.status
+
+                self.logger.warning('The API identification string has changed.')
+
+        except urllib.error.URLError as err:
+            self.logger.error('URLError: %s: %s', request.full_url, err.reason)
+        except ConnectionRefusedError as err:
+            self.logger.error('ConnectionRefusedError: %s: %s', request.full_url, err)
+
+        # if there's a connection issue, assume it's permanent and exit
+        # immediately, don't bother trying to clean_hosts().
+        self.logger.error('Lost connection to API. Exiting.')
+        self.params.clean_on_exit = False
+
+        os.kill(os.getpid(), signal.SIGINT)
+        sys.exit(0)
+
     def add_hosts(self, short_id, hostnames):
         """
         Add hosts via API /add.
@@ -174,7 +229,7 @@ class APIClientHandler():
         if req_status == 200:
             self.logger.info('Added: %s', ', '.join(hostnames))
         else:
-            self.logger.error('Could not add hosts: %s: %s', short_id, req_status)
+            self.logger.error('Could not add hosts: %s: %s', req_status, short_id)
 
     def del_hosts(self, short_id):
         """Delete hosts with matching comment via API /del/."""
@@ -183,7 +238,7 @@ class APIClientHandler():
         if req_status == 204:
             self.logger.info('Deleted: %s', short_id)
         else:
-            self.logger.error('Could not delete hosts: %s: %s', short_id, req_status)
+            self.logger.error('Could not delete hosts: %s: %s', req_status, short_id)
 
     def clean_hosts(self):
         """
@@ -191,11 +246,24 @@ class APIClientHandler():
 
         This assumes the services go down when this Agent goes down, which isn't
         necearrily true but since, at the moment, the manager doesn't do any
-        garbage collection of it's own we're better off erring on the side of
+        garbage collection of its own we're better off erring on the side of
         removing working hostnames over preserving non-working hostnames.
         """
-        self.logger.info('Cleaning hosts.')
-        self.del_hosts(self.params.this_host)
+        if self.params.clean_on_exit:
+            self.logger.info('Cleaning hosts.')
+            self.del_hosts(self.params.this_host)
+
+    def check_status(self):
+        """
+        Check the status of the API on a timer.
+
+        We don't actually need to process the response. If the API is down or
+        the instance ID has changed it will be caught and handled by do_request().
+        The fact we're repeating this action on a timer is the important thing.
+        """
+        self.do_request('status')
+        self.logger.debug('check_status: reset timer')
+        self.status_timer.reset()
 
 
 class DockerHandler():
@@ -332,7 +400,8 @@ class DockerHandler():
             hostnames = self.get_hostnames(container_object)
 
             # don't add self based on a network scan, since we're probably just
-            # using the network as a convenient for the API comms
+            # using the network as a convenience for the API comms and this script
+            # do9esn't actually require an external interface
             if self.params.this_host in hostnames:
                 continue
 
@@ -384,6 +453,10 @@ class DockerHandler():
         except (docker.errors.APIError, KeyError):
             data_object = container
 
+        hostnames = self.get_hostnames(data_object)
+        if self.params.this_host in hostnames:
+            return
+
         try:
             name = data_object.labels['com.docker.swarm.service.name']
         except KeyError:
@@ -398,7 +471,6 @@ class DockerHandler():
         if event['Action'] == 'disconnect':
             self.hosts_handler.del_hosts(short_id)
         elif event['Action'] == 'connect':
-            hostnames = self.get_hostnames(data_object)
             if hostnames is not None:
                 self.hosts_handler.add_hosts(short_id, hostnames)
 
@@ -457,6 +529,7 @@ class ConfigHandler():
             'api_port': '8080',
             'api_key': '',
             'api_retry': 10,
+            'api_status_timer': 60,
             'log_level': self.log_level,
             'ready_fd': '',
             'this_host': os.environ['HOSTNAME'],
@@ -552,10 +625,16 @@ class ConfigHandler():
             help='API access key')
         api_group.add_argument(
             '-R', '--api_retry', action='store', metavar='SECONDS', type=int,
-            help='delay in seconds before retrying failed connection (default: \'%(default)s\')')
+            help='delay in seconds before retrying failed connection (default: '
+            '\'%(default)s\')')
+        api_group.add_argument(
+            '-t', '--api_status_timer', action='store', metavar='SECONDS', type=int,
+            help='time in seconds between checking the API status (default: '
+            '\'%(default)s\')')
         api_group.add_argument(
             '--clean_on_exit', action=argparse.BooleanOptionalAction,
-            help='delete this device\'s hosts from the API when the Agent shuts down (default: enabled)')
+            help='delete this device\'s hosts from the API when the Agent shuts '
+            'down (default: enabled)')
         parser.add_argument(
             '--ready_fd', action='store', metavar='INT',
             help='set to an integer to enable signalling readiness by writing '
@@ -596,6 +675,7 @@ def main():
     finally:
         if args['clean_on_exit'] is not None:
             hosts_handler.clean_hosts()
+        hosts_handler.status_timer.cancel()
         print('Exiting.')
 
 

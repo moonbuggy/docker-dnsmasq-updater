@@ -1,7 +1,7 @@
 <!--lint disable no-undefined-references no-shortcut-reference-link-->
 
 # Docker Dnsmasq Updater
-Automatically update a remote hosts file with Docker container hostnames.
+Automatically update a local or remote hosts file with Docker container hostnames.
 
 *   [Rationale](#rationale)
 *   [What It Does](#what-it-does)
@@ -25,9 +25,9 @@ keep the containers in the top level domain (e.g. \*.local), installing a
 full-fledged name server on the router and syncing it with the same in a
 container on the Docker host.
 
-Docker Dnsmasq Updater allows host names to be added or removed automatically
+Docker Dnsmasq Updater allows hostnames to be added or removed automatically
 without added complexity or resource demands on the router. It can be run as a
-standalone script on the Docker host or in a container, it only needs access to
+standalone script on a Docker host or in a container, it only needs access to
 the Docker socket and SSH access to the router (or any device providing local
 DNS with a hosts file).
 
@@ -136,7 +136,8 @@ the default `--standalone` mode. Manager mode must be enabled with the
 `--manager` argument on the command line or the `mode` value in the config file.
 
 Conversely, the Agent _will_ run on standalone Docker hosts, so it's possible to
-run multiple standalone hosts (and/or Swarms) through a single manager instance.
+run multiple standalone hosts (as well as Swarms) through a single manager
+instance.
 
 In manager mode the script won't listen to the Docker socket directly, only
 ingesting API data. Agents need to be running on all devices in the Swarm to
@@ -170,8 +171,7 @@ options:
 
 Docker:
   -D SOCKET, --docker_socket SOCKET
-                        path to the docker socket (default:
-                        'unix://var/run/docker.sock')
+                        path to the docker socket (default: 'unix://var/run/docker.sock')
   -n NETWORK, --network NETWORK
                         Docker network to monitor
 
@@ -188,6 +188,8 @@ API:
   --clean_on_exit, --no-clean_on_exit
                         delete this device's hosts from the API when the Agent
                         shuts down (default: enabled)
+  -t SECONDS, --api_status_timer SECONDS
+                        time in seconds between checking the API status (default: '60')
 
 ```
 The `--api_key` argument is a string and needs to match the same on the manager.
@@ -311,6 +313,11 @@ to be applied to the to the chosen node:
 See below for a detailed description of available
 [environment variables](#docker-environment-variables).
 
+The Agent should be allowed to restart freely since, by design, it will exit
+upon encountering a variety of otherwise non-fatal errors. This is a simple way
+to trigger a fresh initialization and ensure the manager has the full picture if
+it is restarted or communications are interrupted for whatever reason.
+
 #### Image Tags
 To minimize the Docker image size, and to theoretically improve run times (I
 haven't benchmarked it because I believe it runs fast enough either way) a
@@ -327,7 +334,7 @@ The Agent images will be tagged `agent`.
 > investigate what's changed. I may stop building the binary images.
 >
 > The 'latest' tag now points to the script instead of the binary, since it's
-> become the better option.
+> become the better default option.
 
 Tags may be prefixed with `<version>-` to get a specific version, or just use a
 version number by itself to get `<version>-script`.
@@ -336,8 +343,8 @@ version number by itself to get `<version>-script`.
 The main `latest`, `<version>`, `script`, `binary` and `agent` tags should
 automatically provide images compatible with `amd64`, `arm`/`armv7`,
 `armhf`/`armv6`, `arm64`, `386` and `ppc64le` platforms. Tags for specific
-single-arch images are available, in the form `alpine-<arch>` and
-`alpine-binary-<arch>` for the `script` and `binary` builds respectively.
+single-arch images are available, in the form `alpine-<arch>`,
+`alpine-binary-<arch>` and `agent-<arch>` for the respective builds.
 
 > [!NOTE]
 > I'm only able to test on `amd64`, `armv7` and `arm64`. The `script`, `binary`
@@ -351,37 +358,38 @@ Almost all the command line parameters (see [Usage](#usage)) can be set with
 environment variables.
 
 ##### Docker Dnsmasq Updater
-*   `DMU_MODE`           - operation mode (accepts: `standalone`, `manager`, default: `standalone`)
-*   `DMU_HOSTS_LOCATION` - location of hosts file (accepts: `local`, `remote`, default: `remote`)
+*   `DMU_MODE`           - operation mode (accepts: _standalone_, _manager_; default: _standalone_)
+*   `DMU_HOSTS_LOCATION` - location of hosts file (accepts: _local_, _remote_, default: _remote_)
 *   `DMU_IP`             - default IP for the DNS records
-*   `DMU_DOMAIN`         - domain/zone for the DNS records, defaults to `docker`
-*   `DMU_PREPEND_WWW`    - add _www_ subdomains to all hostnames, defaults to `False`
-*   `DMU_DOCKER_SOCKET`  - path to the docker socket (default: `unix://var/run/docker.sock`)
+*   `DMU_DOMAIN`         - domain/zone for the DNS records (default: _docker_)
+*   `DMU_PREPEND_WWW`    - add _www_ subdomains to all hostnames (default: _False_)
+*   `DMU_DOCKER_SOCKET`  - path to the docker socket (default: _unix://var/run/docker.sock_)
 *   `DMU_NETWORK`        - Docker network to monitor, defaults to none/disabled
 *   `DMU_SERVER`         - _dnsmasq_ server address
-*   `DMU_PORT`           - _dnsmasq_ server SSH port, defaults to `22`
+*   `DMU_PORT`           - _dnsmasq_ server SSH port (default: _22_)
 *   `DMU_LOGIN`          - _dnsmasq_ server login name
 *   `DMU_PASSWORD`       - password for the login name or, if a key is specified, decryption of the key
 *   `DMU_KEY`            - full path to SSH key file
 *   `DMU_HOSTS_FILE`     - full path to the hosts file to update on the _dnsmasq_ server
-*   `DMU_RESTART_CMD`    - command to execute to restart/update dnsmasq, defaults to `service restart_dnsmasq`
-*   `DMU_DELAY`          - delay in seconds before writing remote hosts file, defaults to `10`
-*   `DMU_API_ADDRESS`    - address for API to listen on (default: '0.0.0.0')
-*   `DMU_API_PORT`       - port for API to listen on (default: '8080')
+*   `DMU_RESTART_CMD`    - command to execute to restart/update dnsmasq (default _service restart_dnsmasq_)
+*   `DMU_DELAY`          - delay in seconds before writing remote hosts file (default: _10_)
+*   `DMU_API_ADDRESS`    - address for API to listen on (default: _0.0.0.0_)
+*   `DMU_API_PORT`       - port for API to listen on (default: _8080_)
 *   `DMU_API_KEY`        - API access key
-*   `DMU_DEBUG`          - set `True` to enable debug log output
+*   `DMU_DEBUG`          - set _True_ to enable debug log output
 *   `TZ`		             - set timezone
 
 ##### Docker Dnsmasq Updater Agent
-*   `DMU_DOCKER_SOCKET`  - path to the docker socket (default: `unix://var/run/docker.sock`)
-*   `DMU_NETWORK`        - Docker network to monitor (default: none/disabled)
-*   `DMU_API_SERVER`     - API server address
-*   `DMU_API_PORT`       - port the API is listening on (default: '8080')
-*   `DMU_API_KEY`        - API access key
-*   `DMU_API_RETRY`      - delay in seconds before retrying failed connection (default: '10')
-*   `DMU_CLEAN_ON_EXIT`  - delete this device's hosts from the API when the Agent shuts down (default: `True`)
-*   `DMU_DEBUG`          - set `True` to enable debug log output
-*   `TZ`		             - set timezone
+*   `DMU_DOCKER_SOCKET`     - path to the docker socket (default: _unix://var/run/docker.sock_)
+*   `DMU_NETWORK`           - Docker network to monitor (default: none/disabled)
+*   `DMU_API_SERVER`        - API server address
+*   `DMU_API_PORT`          - port the API is listening on (default: _8080_)
+*   `DMU_API_KEY`           - API access key
+*   `DMU_API_RETRY`         - delay in seconds before retrying failed connection (default: _10_)
+*   `DMU_API_STATUS_TIMER`  - time in seconds between checking the API status (default: _60_)
+*   `DMU_CLEAN_ON_EXIT`     - delete this device's hosts from the API when the Agent shuts down (default: _True_)
+*   `DMU_DEBUG`             - set _True_ to enable debug log output
+*   `TZ`		                - set timezone
 
 ### Setup on dnsmasq server
 Docker Dnsmasq Updater won't track changes other software (i.e _dnsmasq_) might

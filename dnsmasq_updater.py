@@ -33,7 +33,7 @@ from paramiko.ssh_exception import \
 import docker  # type: ignore[import-untyped]
 
 from bottlejwt import JwtPlugin  # type: ignore[import-untyped]
-from bottle import Bottle, request, HTTPResponse  # type: ignore[import-untyped, import-not-found]
+from bottle import Bottle, request, response  # type: ignore[import-untyped, import-not-found]
 from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
 import cryptography.exceptions
 
@@ -473,6 +473,8 @@ class APIServerHandler(Bottle):
         self.route('/add', callback=self.add_hosts, method='POST', auth='user')
         self.route('/del/<short_id>', callback=self.del_hosts, method='DELETE', auth='user')
 
+        self.instance_id = hash(time.time())
+
         signal_ready(self.ready_fd, self.logger)
 
     def validation(self, auth, user):
@@ -494,7 +496,8 @@ class APIServerHandler(Bottle):
             kdf.verify(str.encode(self.params.api_key), bytes.fromhex(client_secret))
         except cryptography.exceptions.InvalidKey as err:
             self.logger.warning('Invalid key from client %s: %s', client_id, err)
-            return HTTPResponse(status=401)
+            response.status = 401
+            return "Unauthorized."
 
         user = {"client_id": client_id, "client_secret": client_secret, "type": "user"}
 
@@ -504,22 +507,34 @@ class APIServerHandler(Bottle):
         return {"access_token": JwtPlugin.encode(user), "type": "bearer"}
 
     def status(self):
-        """Return API status, primarily to let clients know the API is up ."""
-        return "OK"
+        """
+        Return the instance ID.
 
-    def add_hosts(self, auth):
+        This is a general up/ready indicator, as well as providing a unique ID
+        so the clients can tell if the API has restarted (and re-initialize the
+        hosts data accordingly).
+        """
+        self.logger.debug('Status check: %s', request.remote_addr)
+        response.add_header('DMU-API-ID', self.instance_id)
+        return str(self.instance_id)
+
+    def add_hosts(self):
         """Add new hosts."""
         self.logger.debug('add_hosts: %s', request.json)
         self.hosts_handler.add_hosts(request.json['short_id'],
                                      request.json['hostnames'],
                                      request.json.get('from', None))
-        return auth
+        response.add_header('DMU-API-ID', self.instance_id)
+        return str(self.instance_id)
 
     def del_hosts(self, short_id):
         """Delete hosts."""
         self.logger.debug('del_hosts: %s', short_id)
         self.hosts_handler.del_hosts(short_id)
-        return HTTPResponse(status=204)
+
+        response.status = 204
+        response.add_header('DMU-API-ID', self.instance_id)
+        return str(self.instance_id)
 
     def start_monitor(self):
         """
