@@ -2,7 +2,7 @@
 #shellcheck shell=sh
 
 CONFIG_PATH="${APP_PATH:-/app}/conf"
-CONFIG_FILE="${CONFIG_PATH}/dnsmasq_updater.conf"
+CONFIG_FILE="${CONFIG_PATH}/${FILE_STRING}.conf"
 
 if env | grep -q 'DMU_'; then
 	[ ! -z "${DMU_MODE}" ] && sed "s!^mode.*!mode=${DMU_MODE}!" -i $CONFIG_FILE
@@ -50,7 +50,7 @@ if env | grep -q 'DMU_'; then
 		|| sed "s!^api_port.*!api_port=8080!" -i $CONFIG_FILE
 	[ ! -z "${DMU_API_KEY}" ] && sed "s!^api_key.*!api_key=${DMU_API_KEY}!" -i $CONFIG_FILE
 	[ ! -z "${DMU_API_RETRY}" ] && sed "s!^api_retry.*!api_retry=${DMU_API_RETRY}!" -i $CONFIG_FILE
-	[ ! -z "${DMU_API_STATUS_TIMER}" ] && sed "s!^api_status_timer.*!api_status_timer=${DMU_STATUS_TIMER}!" -i $CONFIG_FILE
+	[ ! -z "${DMU_API_CHECK}" ] && sed "s!^api_check.*!api_check=${DMU_API_CHECK}!" -i $CONFIG_FILE
 	[ ! -z "${DMU_API_BACKEND}" ] && sed "s!^api_backend.*!api_backend=${DMU_API_BACKEND}!" -i $CONFIG_FILE
 
 	[ ! -z "${DMU_CLEAN_ON_EXIT}" ] \

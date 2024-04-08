@@ -6,6 +6,7 @@ Automatically update a local or remote hosts file with Docker container hostname
 *   [Rationale](#rationale)
 *   [What It Does](#what-it-does)
 *   [Usage](#usage)
+    *   [Standalone/Manager](#standalone-manager)
     *   [Swarm mode](#swarm-mode)
 *   [Setup](#setup)
     *   [Installation on Docker host](#installation-on-docker-host)
@@ -27,9 +28,9 @@ container on the Docker host.
 
 Docker Dnsmasq Updater allows hostnames to be added or removed automatically
 without added complexity or resource demands on the router. It can be run as a
-standalone script on a Docker host or in a container, it only needs access to
-the Docker socket and SSH access to the router (or any device providing local
-DNS with a hosts file).
+standalone script or in a container, it only needs access to the Docker socket
+and SSH access to the router (or any device providing local DNS with a hosts
+file).
 
 This script has been built with an [AsusWRT-Merlin][]/[Entware][] router in
 mind, but should work with any device running _dnsmasq_ or using a hosts file.
@@ -45,6 +46,7 @@ mind, but should work with any device running _dnsmasq_ or using a hosts file.
 -   Restarts a _dnsmasq_ daemon
 
 ## Usage
+### Standalone/Manager
 ```
 usage: dnsmasq_updater.py [-h] [-c FILE] [--debug] [--ready_fd INT]
                           [--standalone | --manager] [-D SOCKET] [-n NETWORK] [-i IP]
@@ -183,14 +185,12 @@ API:
   -k KEY, --api_key KEY
                         API access key
   -R SECONDS, --api_retry SECONDS
-                        delay in seconds before retrying failed connection
-                        (default: '10')
+                        delay before retrying failed connection (default: '10')
+  -t SECONDS, --api_check SECONDS
+                        delay between checking the API server status (default: '60')
   --clean_on_exit, --no-clean_on_exit
                         delete this device's hosts from the API when the Agent
                         shuts down (default: enabled)
-  -t SECONDS, --api_status_timer SECONDS
-                        time in seconds between checking the API status (default: '60')
-
 ```
 The `--api_key` argument is a string and needs to match the same on the manager.
 
@@ -372,7 +372,7 @@ environment variables.
 *   `DMU_KEY`            - full path to SSH key file
 *   `DMU_HOSTS_FILE`     - full path to the hosts file to update on the _dnsmasq_ server
 *   `DMU_RESTART_CMD`    - command to execute to restart/update dnsmasq (default _service restart_dnsmasq_)
-*   `DMU_DELAY`          - delay in seconds before writing remote hosts file (default: _10_)
+*   `DMU_DELAY`          - delay (in seconds) before writing remote hosts file (default: _10_)
 *   `DMU_API_ADDRESS`    - address for API to listen on (default: _0.0.0.0_)
 *   `DMU_API_PORT`       - port for API to listen on (default: _8080_)
 *   `DMU_API_KEY`        - API access key
@@ -380,16 +380,16 @@ environment variables.
 *   `TZ`		             - set timezone
 
 ##### Docker Dnsmasq Updater Agent
-*   `DMU_DOCKER_SOCKET`     - path to the docker socket (default: _unix://var/run/docker.sock_)
-*   `DMU_NETWORK`           - Docker network to monitor (default: none/disabled)
-*   `DMU_API_SERVER`        - API server address
-*   `DMU_API_PORT`          - port the API is listening on (default: _8080_)
-*   `DMU_API_KEY`           - API access key
-*   `DMU_API_RETRY`         - delay in seconds before retrying failed connection (default: _10_)
-*   `DMU_API_STATUS_TIMER`  - time in seconds between checking the API status (default: _60_)
-*   `DMU_CLEAN_ON_EXIT`     - delete this device's hosts from the API when the Agent shuts down (default: _True_)
-*   `DMU_DEBUG`             - set _True_ to enable debug log output
-*   `TZ`		                - set timezone
+*   `DMU_DOCKER_SOCKET`  - path to the docker socket (default: _unix://var/run/docker.sock_)
+*   `DMU_NETWORK`        - Docker network to monitor (default: none/disabled)
+*   `DMU_API_SERVER`     - API server address
+*   `DMU_API_PORT`       - port the API is listening on (default: _8080_)
+*   `DMU_API_KEY`        - API access key
+*   `DMU_API_RETRY`      - delay (in seconds) before retrying failed connection (default: _10_)
+*   `DMU_API_CHECK`      - delay (in seconds) between checking the API server status (default: _60_)
+*   `DMU_CLEAN_ON_EXIT`  - delete this device's hosts from the API when the Agent shuts down (default: _True_)
+*   `DMU_DEBUG`          - set _True_ to enable debug log output
+*   `TZ`		             - set timezone
 
 ### Setup on dnsmasq server
 Docker Dnsmasq Updater won't track changes other software (i.e _dnsmasq_) might

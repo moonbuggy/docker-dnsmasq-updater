@@ -7,7 +7,7 @@
 
 DOCKER_REPO="${DOCKER_REPO:-moonbuggy2000/dnsmasq-updater}"
 
-all_tags='alpine alpine-binary agent'
+all_tags='alpine alpine-binary agent agent-binary'
 default_tag='alpine agent'
 
 . "hooks/.build.sh"

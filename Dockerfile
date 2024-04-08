@@ -23,11 +23,12 @@ ENV	VIRTUAL_ENV="${VIRTUAL_ENV}" \
 RUN python3 -m pip install --upgrade virtualenv \
 	&& python3 -m virtualenv --download "${BUILDER_ROOT}${VIRTUAL_ENV}"
 
+# setup Python requirements
 ARG AGENT_STRING=''
 COPY "./requirements${AGENT_STRING}.txt" ./requirements.txt
 
 ARG API_BACKEND="${API_BACKEND:-}"
-RUN test ! -z "${API_BACKEND}" && echo "${API_BACKEND}" >> ./requirements.txt
+RUN echo "${API_BACKEND}" >> ./requirements.txt
 
 # Python wheels from pre_build
 ARG TARGET_ARCH_TAG="amd64"
@@ -64,16 +65,17 @@ RUN if ! python3 -m pip install --only-binary=:all: --find-links "/${IMPORTS_DIR
 # organize files
 RUN mkdir ./keys
 
-COPY "./dnsmasq_updater${AGENT_STRING}.conf" ./conf/dnsmasq_updater.conf
-COPY "./dnsmasq_updater${AGENT_STRING}.py" ./dnsmasq_updater
+ARG FILE_STRING="dnsmasq_updater${AGENT_STRING}"
+COPY "./${FILE_STRING}.conf" ./conf/
+COPY "./${FILE_STRING}.py" "./${FILE_STRING}"
 
 WORKDIR "${BUILDER_ROOT}"
 
 COPY ./root ./
 
-ARG API_BACKEND="${API_BACKEND:-}"
 RUN add-contenv \
 		APP_PATH="${APP_PATH}" \
+		FILE_STRING="${FILE_STRING}" \
 		PATH="${VIRTUAL_ENV}/bin:${ORIGINAL_PATH}" \
 		VIRTUAL_ENV="${VIRTUAL_ENV}" \
 		PYTHONDONTWRITEBYTECODE="1" \

@@ -117,26 +117,27 @@ class ResettableTimer():
 
     def __init__(self, delay, function):
         """Initialize timing."""
-        self.running = False
-        self.delay = delay
-        self.function = function
-        self.timer = Timer(self.delay, self.function)
+        self._running = False
+        self._delay = delay
+        self._function = function
+        self._timer = Timer(self._delay, self._function)
 
     def __set(self):
-        self.timer = Timer(self.delay, self.function)
+        self._timer = Timer(self._delay, self._function)
 
     def start(self):
         """If not running, start timer."""
-        if not self.running:
+        if not self._running:
             self.__set()
-            self.timer.start()
-            self.running = True
+            self._timer.daemon = True
+            self._timer.start()
+            self._running = True
 
     def cancel(self):
         """If running, cancel timer."""
-        if self.running:
-            self.timer.cancel()
-            self.running = False
+        if self._running:
+            self._timer.cancel()
+            self._running = False
 
     def reset(self):
         """Reset timer."""
@@ -485,8 +486,8 @@ class APIServerHandler(Bottle):
         """
         Authenticate a node.
 
-        request: {'client_id': <client_id>, 'client_secret': 'password'}
-        response: {'access_token': 'token', 'type': 'bearer'}
+        request: {'client_id': <client_id>, 'client_secret': <password>}
+        response: {'access_token': <token>, 'type': 'bearer'}
         """
         client_id = request.headers.get('client_id')
         client_secret = request.headers.get('client_secret')
@@ -514,7 +515,7 @@ class APIServerHandler(Bottle):
         so the clients can tell if the API has restarted (and re-initialize the
         hosts data accordingly).
         """
-        self.logger.debug('Status check: %s', request.remote_addr)
+        # self.logger.debug('Status check: %s', request.remote_addr)
         response.add_header('DMU-API-ID', self.instance_id)
         return str(self.instance_id)
 
