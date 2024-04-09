@@ -6,7 +6,7 @@ Automatically update a local or remote hosts file with Docker container hostname
 *   [Rationale](#rationale)
 *   [What It Does](#what-it-does)
 *   [Usage](#usage)
-    *   [Standalone/Manager](#standalone-manager)
+    *   [Standalone/Manager](#standalonemanager)
     *   [Swarm mode](#swarm-mode)
 *   [Setup](#setup)
     *   [Installation on Docker host](#installation-on-docker-host)
@@ -319,39 +319,32 @@ to trigger a fresh initialization and ensure the manager has the full picture if
 it is restarted or communications are interrupted for whatever reason.
 
 #### Image Tags
-To minimize the Docker image size, and to theoretically improve run times (I
-haven't benchmarked it because I believe it runs fast enough either way) a
-binary build is available, tagged as `binary`. A build using the un-compiled
-Python script is available, tagged `script`.
-
-The default `latest` tag points to the script version.
-
-The Agent images will be tagged `agent`.
-
-> [!NOTE]
-> After upgrading the Nuitka version, binary builds are currently larger than
-> the the un-compiled images. I'm not sure it's worth the time and effort to
-> investigate what's changed. I may stop building the binary images.
->
-> The 'latest' tag now points to the script instead of the binary, since it's
-> become the better default option.
+The default `latest` tag and the `script` tag point to the standalone/manager
+script. Agent images will be tagged `agent`.
 
 Tags may be prefixed with `<version>-` to get a specific version, or just use a
 version number by itself to get `<version>-script`.
 
+> [!NOTE]
+> After upgrading the Nuitka version, binary builds are currently larger than the
+> un-compiled images. There's also an issue building gunicorn (which is used as
+> the API backend in the image) that I've not bothered investigating.
+>
+> As a result, for the time being at least, I've discontinued the `binary` builds.
+> The build system remains capable of building them, and I may begin doing so
+> again at some point. But not today.
+
 #### Architectures
-The main `latest`, `<version>`, `script`, `binary` and `agent` tags should
-automatically provide images compatible with `amd64`, `arm`/`armv7`,
-`armhf`/`armv6`, `arm64`, `386` and `ppc64le` platforms. Tags for specific
-single-arch images are available, in the form `alpine-<arch>`,
-`alpine-binary-<arch>` and `agent-<arch>` for the respective builds.
+The main `latest`, `<version>`, `script`, and `agent` tags should automatically
+provide images compatible with `amd64`, `arm`/`armv7`, `armhf`/`armv6`, `arm64`,
+`386` and `ppc64le` platforms. Tags for specific single-arch images are
+available, in the form `alpine-<arch>` and `agent-<arch>` for the respective
+builds.
 
 > [!NOTE]
-> I'm only able to test on `amd64`, `armv7` and `arm64`. The `script`, `binary`
-> and `agent` builds currently work on these architectures. The `script` build is
-> more portable and less likely to have problems on un-tested architectures
-> (although the `binary`builds _should_ be fine as well). If `binary` doesn't work
-> on a particular piece of hardware, `script` would be worth trying.
+> I'm only able to test on `amd64`, `armv7` and `arm64`. The `script` and `agent`
+> images currently work on these architectures. I assume they work on other
+> architectures as well, but can't guarantee it..
 
 #### Docker environment variables
 Almost all the command line parameters (see [Usage](#usage)) can be set with
