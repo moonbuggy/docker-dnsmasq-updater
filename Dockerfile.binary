@@ -17,6 +17,11 @@ FROM "moonbuggy2000/nuitka:py${BUILD_PYTHON_VERSION}-${TARGET_OS}-${TARGET_ARCH_
 ARG APP_PATH="/app"
 WORKDIR "${APP_PATH}"
 
+# Python wheels from pre_build
+ARG IMPORTS_DIR=".imports"
+ARG TARGET_ARCH_TAG
+COPY _dummyfile "${IMPORTS_DIR}/${TARGET_ARCH_TAG}*" "/${IMPORTS_DIR}/"
+
 # setup Python requirements
 ARG AGENT_STRING=''
 COPY "./requirements${AGENT_STRING}.txt" ./requirements.txt
@@ -24,10 +29,12 @@ COPY "./requirements${AGENT_STRING}.txt" ./requirements.txt
 ARG API_BACKEND="${API_BACKEND:-}"
 RUN echo "${API_BACKEND}" >> ./requirements.txt
 
-# Python wheels from pre_build
-ARG IMPORTS_DIR=".imports"
-ARG TARGET_ARCH_TAG
-COPY _dummyfile "${IMPORTS_DIR}/${TARGET_ARCH_TAG}*" "/${IMPORTS_DIR}/"
+# use PyPi proxy, if provided
+ARG PYPI_INDEX="https://pypi.org/simple"
+RUN (mv /etc/pip.conf /etc/pip.conf.bak || true) \
+	&& printf '%s\n' '[global]' "  index-url = ${PYPI_INDEX}" \
+		"  trusted-host = $(echo "${PYPI_INDEX}" | cut -d'/' -f3 | cut -d':' -f1)" \
+		>/etc/pip.conf
 
 RUN python3 -m pip install ${PIP_ARGS} --upgrade pip \
 	&& python3 -m pip install --only-binary=:all: --find-links "/${IMPORTS_DIR}/"  -r requirements.txt \
