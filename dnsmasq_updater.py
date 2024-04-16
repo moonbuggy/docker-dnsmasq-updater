@@ -343,7 +343,7 @@ class HostsHandler():
         self.delayed_write = ResettableTimer(self.params.local_write_delay, self.write_hosts)
         self.hosts = Hosts(path='/dev/null')
 
-    def parse_hostnames(self, hostnames):
+    def parse_hostnames(self, hostnames, id_string):
         """
         Return dictionary items containing IPs and a list of hostnames.
 
@@ -366,13 +366,14 @@ class HostsHandler():
             except ValueError:
                 pass
 
-            if not self.hosts.exists(names=[hostname]):
+            if not self.hosts.exists(comment=id_string):
                 host_list.update([hostname, hostname + '.' + self.params.domain])
 
                 if self.params.prepend_www and not re.search('^www', hostname):
                     host_list.update(['www.' + hostname + '.' + self.params.domain])
-
                 hostname_dict[host_ip].update(host_list)
+            else:
+                self.logger.debug('comment exists in Hosts: %s', id_string)
 
         return dict([host_ip, sorted(hostnames)] for host_ip, hostnames in hostname_dict.items())
 
@@ -386,15 +387,16 @@ class HostsHandler():
         that added the host allows esay deletion for all that Agent's hosts if
         the Agent goes down.
         """
-        parsed_hostnames = self.parse_hostnames(hostnames)
+        id_string = short_id
+        if agent_id is not None:
+            id_string += '.' + agent_id
+
+        parsed_hostnames = self.parse_hostnames(hostnames, id_string)
         parsed_items = parsed_hostnames.items()
 
         if not parsed_items:
             self.logger.debug('Added host(s): no hostnames to add: %s', short_id)
         else:
-            id_string = short_id
-            if agent_id is not None:
-                id_string = id_string + '.' + agent_id
             try:
                 for host_ip, names in parsed_items:
                     self.logger.debug('Adding: %s: %s', host_ip, ', '.join(names))

@@ -288,6 +288,16 @@ services:
       - traefik
 
   # one whoami instance per node, exposed on port 8888
+  #
+  # NOTE: Round-robin DNS like this currently won't work, as the python-hosts
+  #       module doesn't allow duplicate hostnames. Ideally these containers would
+  #       come up with working round-robin DNS, but only the first or last node
+  #       (depending on if force=False or force=True in hosts.add, respectively)
+  #       that the manager sees gets a hosts entry.
+  #
+  #       For the foreseeable future, any load balancing will need to be done
+  #       through a frontend, using just a single external IP, not through
+  #       round-robin DNS..
   whoami:
     image: traefik/whoami:latest
     hostname: whoami.swarm
