@@ -408,14 +408,20 @@ docker_container_contents () {
 
 	[ -n "${NOOP+set}" ] && [ -z "${WHEELS_FORCE_PULL+set}" ] && echo 'Status: [NOOP]' && return
 
-	if [ -z "${WHEELS_FORCE_PULL+set}" ] && docker inspect "${import_image}" > /dev/null 2>&1; then
+	if [ -z "${WHEELS_FORCE_PULL+set}" ] && docker inspect "${import_image}" >/dev/null 2>&1; then
 		echo "Status: Using existing local image."
 	elif ! docker pull "${import_image}" 2>/dev/null | grep Status; then
 		echo "Status: Image not found."
 		return
 	fi
 
-	docker save "${import_image}" | tar --wildcards -xf - -O -- */layer.tar | tar "${tar_args}" -ixf - -C "${output_dir}"
+# this stopped working in a Docker version released 2023/2024
+#	docker save "${import_image}" | tar --wildcards -xf - -O -- */layer.tar | tar "${tar_args}" -ixf - -C "${output_dir}"
+
+	echo "FROM ${import_image}" >_tempDockerfile
+	docker build -q -o _tempContents -f _tempDockerfile . >/dev/null
+	cp _tempContents/* "${output_dir}"
+	rm -rf _tempContents _tempDockerfile >/dev/null 2>&1
 }
 
 ## parse YAML configuration

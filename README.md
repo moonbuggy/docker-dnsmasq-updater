@@ -246,6 +246,7 @@ version: '3.8'
 services:
   dnsmasq-updater:
     image: moonbuggy2000/dnsmasq-updater:script
+    hostname: dmu.swarm
     deploy:
       mode: replicated
       replicas: 1
@@ -254,7 +255,6 @@ services:
           # use a label to choose a specific Swarm node for the manager
           # this ensures the volume for /app/keys will be present
           - node.labels.dnsmasq-updater == true
-    hostname: dmu.swarm
     environment:
       - DMU_DEBUG=false
       - DMU_MODE=manager
@@ -286,6 +286,18 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
     networks:
       - traefik
+
+  # one whoami instance per node, exposed on port 8888
+  whoami:
+    image: traefik/whoami:latest
+    hostname: whoami.swarm
+    deploy:
+      mode: global
+    ports:
+      - 8888:80
+    labels:
+      - dnsmasq.updater.enable=true
+      - dnsmasq.updater.ip=host
 
 volumes:
   dnsmasq-updater_keys:
@@ -444,7 +456,10 @@ If you choose to monitor a user-defined Docker network then
 any container connecting to the monitored network is a container that you want
 working DNS for.
 
-Leave `dnsmasq.updater.ip` unset to use the default.
+`dnsmasq.updater.ip` can be an IP address or the string `host`. Setting this to
+`host` will use the Swarm node's IP address (based on the device's hostname, as
+seen in the output from `docker info` under `Name`, which must must be
+resolvable). Leave `dnsmasq.updater.ip` unset to use the manager's default IP.
 
 Any defined `extra_hosts` will be given the IP from that definition.
 

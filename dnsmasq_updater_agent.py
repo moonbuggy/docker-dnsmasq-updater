@@ -15,6 +15,7 @@ import configparser
 import json
 import time
 import re
+import socket
 import urllib.request
 
 from threading import Timer
@@ -193,7 +194,6 @@ class APIClientHandler():
                 if resp.getheader('DMU-API-ID') == self.api_instance:
                     self.status_timer.reset()
                     return resp.status
-
                 self.logger.warning('The API identification string has changed.')
 
         except urllib.error.URLError as err:
@@ -290,6 +290,14 @@ class DockerHandler():
                             'connect': 'connecting to',
                             'disconnect': 'disconnecting from'}
 
+        self.get_client()
+        self.docker_node_ip = socket.getaddrinfo(self.client.info()['Name'],
+                                                 self.params.api_port,
+                                                 proto=socket.IPPROTO_TCP)[0][4][0]
+
+        self.logger.debug('Docker node: %s: %s',
+                          self.client.info()['Name'], self.docker_node_ip)
+
         if self.params.ready_fd == '':
             self.ready_fd = False
         else:
@@ -365,9 +373,13 @@ class DockerHandler():
     def get_hostip(self, container):
         """Get any IP address set with a label."""
         try:
-            return container.labels['dnsmasq.updater.ip']
+            hostip = container.labels['dnsmasq.updater.ip']
         except (AttributeError, KeyError):
             return None
+
+        if hostip == 'host':
+            return self.docker_node_ip
+        return hostip
 
     def get_container_data(self, container):
         """
@@ -377,7 +389,6 @@ class DockerHandler():
             {'id': <short_id>, 'name': <container name>, 'hostnames': <hostnames>}
         """
         hostnames = self.get_hostnames(container)
-
         try:
             name = container.labels['com.docker.swarm.service.name']
         except (AttributeError, KeyError):
@@ -415,22 +426,23 @@ class DockerHandler():
                 'Cannot scan network: network \'%s\' does not exist.', self.params.network)
             return
 
-        for container in network.attrs['Containers']:
-            try:
-                this_container = self.client.containers.get(container)
-            except docker.errors.NotFound:
-                continue
+        if network.attrs['Containers'] is not None:
+            for container in network.attrs['Containers']:
+                try:
+                    this_container = self.client.containers.get(container)
+                except docker.errors.NotFound:
+                    continue
 
-            container_data = self.get_container_data(this_container)
+                container_data = self.get_container_data(this_container)
 
-            # don't add self based on a network scan, since we're probably just
-            # using the network for API communication as a convenience
-            if self.params.this_host in container_data['hostnames']:
-                continue
+                # don't add self based on a network scan, since we're probably just
+                # using the network for API communication as a convenience
+                if self.params.this_host in container_data['hostnames']:
+                    continue
 
-            self.logger.info('Found %s: %s', container_data['name'],
-                             ', '.join(container_data['hostnames']))
-            self.hosts_handler.add_hosts(container_data)
+                self.logger.info('Found %s: %s', container_data['name'],
+                                 ', '.join(container_data['hostnames']))
+                self.hosts_handler.add_hosts(container_data)
 
         self.logger.info('Finished scanning containers on \'%s\' network.', self.params.network)
 
@@ -490,7 +502,6 @@ class DockerHandler():
 
         Process existing containers then monitor events.
         """
-        self.get_client()
         self.scan_runnning_containers()
 
         if self.params.network:

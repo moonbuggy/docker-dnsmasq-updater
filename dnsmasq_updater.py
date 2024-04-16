@@ -26,6 +26,7 @@ from collections import defaultdict
 from typing import Dict
 
 from python_hosts import Hosts, HostsEntry  # type: ignore[import-untyped]
+import python_hosts.exception  # type: ignore[import-untyped]
 from paramiko.client import SSHClient, AutoAddPolicy
 from paramiko import RSAKey, DSSKey
 from paramiko.ssh_exception import \
@@ -397,9 +398,13 @@ class HostsHandler():
             try:
                 for host_ip, names in parsed_items:
                     self.logger.debug('Adding: %s: %s', host_ip, ', '.join(names))
-                    hostentry = HostsEntry(entry_type='ipv4', address=host_ip,
-                                           names=names, comment=id_string)
-                    self.hosts.add([hostentry], force=True, allow_address_duplication=True)
+                    try:
+                        hostentry = HostsEntry(entry_type='ipv4', address=host_ip,
+                                               names=names, comment=id_string)
+                    except python_hosts.exception.InvalidIPv4Address:
+                        self.logger.error('Skipping invalid IP address: %s', host_ip)
+                    else:
+                        self.hosts.add([hostentry], force=True, allow_address_duplication=True)
 
                 if do_write:
                     self.queue_write()
