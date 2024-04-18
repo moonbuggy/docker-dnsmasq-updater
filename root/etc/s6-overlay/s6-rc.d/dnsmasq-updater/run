@@ -14,4 +14,4 @@ if [ ! -z ${DMU_DEBUG+set} ]; then
 	esac
 fi
 
-${APP_PATH}/dnsmasq_updater -c ${APP_PATH}/conf/dnsmasq_updater.conf ${DEBUG_STRING}
+${APP_PATH}/${FILE_STRING} -c ${APP_PATH}/conf/${FILE_STRING}.conf ${DEBUG_STRING}

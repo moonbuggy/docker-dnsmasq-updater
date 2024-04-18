@@ -1,9 +1,9 @@
 # syntax = docker/dockerfile:1.4.0
 
-ARG ALPINE_VERSION="3.15"
+ARG ALPINE_VERSION="3.18"
 ARG FROM_IMAGE="moonbuggy2000/alpine-s6:${ALPINE_VERSION}"
 
-ARG BUILD_PYTHON_VERSION="3.9"
+ARG BUILD_PYTHON_VERSION="3.11"
 ARG TARGET_OS="alpine"
 ARG TARGET_ARCH_TAG="amd64"
 
@@ -17,7 +17,12 @@ FROM "moonbuggy2000/nuitka:py${BUILD_PYTHON_VERSION}-${TARGET_OS}-${TARGET_ARCH_
 ARG APP_PATH="/app"
 WORKDIR "${APP_PATH}"
 
-COPY ./requirements.txt ./
+# setup Python requirements
+ARG AGENT_STRING=''
+COPY "./requirements${AGENT_STRING}.txt" ./requirements.txt
+
+ARG API_BACKEND="${API_BACKEND:-}"
+RUN echo "${API_BACKEND}" >> ./requirements.txt
 
 # Python wheels from pre_build
 ARG IMPORTS_DIR=".imports"
@@ -28,32 +33,36 @@ RUN python3 -m pip install ${PIP_ARGS} --upgrade pip \
 	&& python3 -m pip install --only-binary=:all: --find-links "/${IMPORTS_DIR}/"  -r requirements.txt \
 		|| python3 -m pip install --find-links "/${IMPORTS_DIR}/" -r requirements.txt
 
-COPY ./dnsmasq_updater.py ./
+ARG FILE_STRING="dnsmasq_updater${AGENT_STRING}"
+COPY "./${FILE_STRING}.py" ./
 
-ARG DMU_VERSION="1.0"
+# Nuitka build
+ARG DMU_VERSION="dev"
 RUN python3 -m nuitka --show-progress \
 		--standalone \
 		--clang \
 		--output-dir="${BUILDER_ROOT}${APP_PATH}" \
-		--output-filename=dnsmasq_updater \
+		--output-filename="${FILE_STRING}" \
 		--product-version="${DMU_VERSION}" \
 		--no-deployment-flag=self-execution \
-		dnsmasq_updater.py
+		"${FILE_STRING}.py"
 
-RUN mkdir ./dnsmasq_updater.dist/keys \
-	&& mkdir ./dnsmasq_updater.dist/conf
+RUN mkdir "./${FILE_STRING}.dist/keys" \
+	&& mkdir "./${FILE_STRING}.dist/conf"
 
 # organize files
 ARG BUILDER_ROOT
 RUN mkdir -p "${BUILDER_ROOT}" \
-	&& mv dnsmasq_updater.dist "${BUILDER_ROOT}${APP_PATH}"
+	&& mv "${FILE_STRING}".dist "${BUILDER_ROOT}${APP_PATH}"
 
 WORKDIR "${BUILDER_ROOT}"
 
-COPY ./dnsmasq_updater.conf ".${APP_PATH}/conf/"
+COPY "./${FILE_STRING}.conf" ".${APP_PATH}/conf/"
 COPY ./root/ ./
 
-RUN echo "APP_PATH=${APP_PATH}" >> "${BUILDER_ROOT}/etc/contenv_extra"
+RUN echo "APP_PATH=${APP_PATH}" >> "${BUILDER_ROOT}/etc/contenv_extra" \
+	&& echo "FILE_STRING=${FILE_STRING}" >> "${BUILDER_ROOT}/etc/contenv_extra" \
+	&& echo "DMU_API_BACKEND=${API_BACKEND}" >> "${BUILDER_ROOT}/etc/contenv_extra"
 
 
 ## build the final image
@@ -62,5 +71,7 @@ FROM "${FROM_IMAGE}"
 
 ARG BUILDER_ROOT
 COPY --from=builder "${BUILDER_ROOT}/" /
+
+ENV S6_CMD_WAIT_FOR_SERVICES_MAXTIME=0
 
 HEALTHCHECK --start-period=10s --timeout=10s CMD /healthcheck.sh
