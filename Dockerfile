@@ -20,8 +20,21 @@ ENV	VIRTUAL_ENV="${VIRTUAL_ENV}" \
 	PYTHONUNBUFFERED="1" \
 	LIBSODIUM_MAKE_ARGS="-j4"
 
+# use PyPi and APK caches, if provided
+ARG PYPI_INDEX="https://pypi.org/simple"
+ARG ARG APK_PROXY=""
+RUN (mv /etc/pip.conf /etc/pip.conf.bak || true) \
+	&& printf '%s\n' '[global]' "  index-url = ${PYPI_INDEX}" \
+		"  trusted-host = $(echo "${PYPI_INDEX}" | cut -d'/' -f3 | cut -d':' -f1)" \
+		>/etc/pip.conf
+
 RUN python3 -m pip install --upgrade virtualenv \
 	&& python3 -m virtualenv --download "${BUILDER_ROOT}${VIRTUAL_ENV}"
+
+# Python wheels from pre_build
+ARG TARGET_ARCH_TAG="amd64"
+ARG IMPORTS_DIR=".imports"
+COPY _dummyfile "${IMPORTS_DIR}/${TARGET_ARCH_TAG}*" "/${IMPORTS_DIR}/"
 
 # setup Python requirements
 ARG AGENT_STRING=''
@@ -29,11 +42,6 @@ COPY "./requirements${AGENT_STRING}.txt" ./requirements.txt
 
 ARG API_BACKEND="${API_BACKEND:-}"
 RUN echo "${API_BACKEND}" >> ./requirements.txt
-
-# Python wheels from pre_build
-ARG TARGET_ARCH_TAG="amd64"
-ARG IMPORTS_DIR=".imports"
-COPY _dummyfile "${IMPORTS_DIR}/${TARGET_ARCH_TAG}*" "/${IMPORTS_DIR}/"
 
 # activate virtual env
 ENV ORIGINAL_PATH="$PATH"
@@ -44,23 +52,29 @@ ENV PATH="${BUILDER_ROOT}${VIRTUAL_ENV}/bin:$PATH"
 ARG SSL_LIBRARY="openssl"
 ARG RUST_REQUIRED="1.41.1"
 RUN if ! python3 -m pip install --only-binary=:all: --find-links "/${IMPORTS_DIR}/" -r requirements.txt; then \
-			echo "ERROR: Could not build with binary wheels. Attempting to build from source.."; \
-			apk add --no-cache \
-				"${SSL_LIBRARY}-dev" \
-				cargo \
-				ccache \
-				gcc \
-				libffi-dev \
-				make \
-				musl-dev \
-				openssl-dev \
-			#	python3-dev \
-				rust; \
-			RUST_VERSION="$(rustc --version | cut -d' ' -f2)"; \
-			if [ "$(printf '%s\n' "${RUST_REQUIRED}" "${RUST_VERSION}" | sort -V | head -n1)" != "${RUST_REQUIRED}" ]; then \
-				echo "*** CRYPTOGRAPHY_DONT_BUILD_RUST ***"; export "CRYPTOGRAPHY_DONT_BUILD_RUST=1"; fi; \
-			python3 -m pip install --find-links "/${IMPORTS_DIR}/" -r requirements.txt; \
-		fi
+		echo "ERROR: Could not build with binary wheels. Attempting to build from source.."; \
+		if [ ! -z "${APK_PROXY}" ]; then \
+			alpine_minor_ver="$(grep -o 'VERSION_ID.*' /etc/os-release | grep -oE '([0-9]+\.[0-9]+)')"; \
+			mv /etc/apk/repositories /etc/apk/repositories.bak; \
+			echo "${APK_PROXY}/alpine/v${alpine_minor_ver}/main" >/etc/apk/repositories; \
+			echo "${APK_PROXY}/alpine/v${alpine_minor_ver}/community" >>/etc/apk/repositories; \
+		fi \
+		&& apk add --no-cache \
+			"${SSL_LIBRARY}-dev" \
+			cargo \
+			ccache \
+			gcc \
+			libffi-dev \
+			make \
+			musl-dev \
+			openssl-dev \
+		#	python3-dev \
+			rust; \
+		RUST_VERSION="$(rustc --version | cut -d' ' -f2)"; \
+		if [ "$(printf '%s\n' "${RUST_REQUIRED}" "${RUST_VERSION}" | sort -V | head -n1)" != "${RUST_REQUIRED}" ]; then \
+			echo "*** CRYPTOGRAPHY_DONT_BUILD_RUST ***"; export "CRYPTOGRAPHY_DONT_BUILD_RUST=1"; fi; \
+		python3 -m pip install --find-links "/${IMPORTS_DIR}/" -r requirements.txt; \
+	fi
 
 # organize files
 RUN mkdir ./keys

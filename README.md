@@ -103,7 +103,7 @@ Remote hosts file (needed by --remote):
                         password for the dnsmasq server OR for an encrypted SSH key
 
 API server (needed by --manager):
-  --api_address PORT    address for API to listen on (default: '0.0.0.0')
+  --api_address IP      address for API to listen on (default: '0.0.0.0')
   --api_port PORT       port for API to listen on (default: '8080')
   --api_key KEY         API access key
   --api_backend STRING  API backend (refer to Bottle module docs for details)
@@ -241,11 +241,12 @@ _/app/keys/_ folder.
 #### Swarm deployment
 ##### docker-compose.yml
 ```yaml
-version: '3.8'
+version: '3.7'
 
 services:
   dnsmasq-updater:
     image: moonbuggy2000/dnsmasq-updater:script
+    hostname: dmu
     deploy:
       mode: replicated
       replicas: 1
@@ -254,7 +255,6 @@ services:
           # use a label to choose a specific Swarm node for the manager
           # this ensures the volume for /app/keys will be present
           - node.labels.dnsmasq-updater == true
-    hostname: dmu.swarm
     environment:
       - DMU_DEBUG=false
       - DMU_MODE=manager
@@ -279,13 +279,46 @@ services:
     environment:
       - DMU_DEBUG=false
       - DMU_NETWORK=traefik
-      - DMU_API_SERVER=dmu.swarm
+      - DMU_API_SERVER=dmu
       - DMU_API_PORT=8080
       - DMU_API_KEY=<api_key>
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     networks:
       - traefik
+
+  # a single container accessible through a traefik frontend
+  whoami-frontend:
+    image: traefik/whoami:latest
+    hostname: whoami-frontend
+    deploy:
+      mode: replicated
+      replicas: 1
+      labels:
+        - traefik.enable=true
+        - traefik.http.routers.whoami-frontend.rule=Host(`whoami-frontend.swarm`)
+        - traefik.http.routers.whoami-frontend.entryPoints=http,https
+        - traefik.http.services.whoami-frontend.loadbalancer.server.port=80
+    labels:
+      - dnsmasq.updater.enable=true # can be omitted, we're on DMU_NETWORK
+      - dnsmasq.updater.host=whoami-frontend.swarm # can be omitted, set by 'hostname' and traefik
+      - dnsmasq.updater.ip=<frontend_IP> # can be omitted, it's the DMU_IP default
+    networks:
+      - traefik
+
+  # assuming nothing at the dnsmasq end precludes it, this should result in
+  # working round-robin DNS for this directly exposed service
+  whoami-global:
+    image: traefik/whoami:latest
+    hostname: whoami-global
+    deploy:
+      mode: global
+    ports:
+      - 8888:80
+    labels:
+      - dnsmasq.updater.enable=true
+      - dnsmasq.updater.host=whoami-global.swarm # can be omitted, set by 'hostname'
+      - dnsmasq.updater.ip=host
 
 volumes:
   dnsmasq-updater_keys:
@@ -302,9 +335,8 @@ to monitor it for activity, it's convenient to stick the manager on this network
 as well and use it for API communication.
 
 The manager's `DMU_IP` default IP should point to a frontend/reverse proxy,
-Traefik or otherwise. It's possible to override the default IP on a
-per-container basis with with a `dnsmasq.updater.ip` label on individual
-containers.
+Traefik or otherwise. It's possible to override the default IP on a per-service
+basis with with a `dnsmasq.updater.ip` label on individual services.
 
 To meet the manager's constraints, the `dnsmasq-updater.manager` label will need
 to be applied to the to the chosen node:
@@ -316,7 +348,7 @@ See below for a detailed description of available
 The Agent should be allowed to restart freely since, by design, it will exit
 upon encountering a variety of otherwise non-fatal errors. This is a simple way
 to trigger a fresh initialization and ensure the manager has the full picture if
-it is restarted or communications are interrupted for whatever reason.
+it's restarted or communications are interrupted for whatever reason.
 
 #### Image Tags
 The default `latest` tag and the `script` tag point to the standalone/manager
@@ -328,7 +360,7 @@ version number by itself to get `<version>-script`.
 > [!NOTE]
 > After upgrading the Nuitka version, binary builds are currently larger than the
 > un-compiled images. There's also an issue building gunicorn (which is used as
-> the API backend in the image) that I've not bothered investigating.
+> the API backend in the manager image) that I've not bothered investigating.
 >
 > As a result, for the time being at least, I've discontinued the `binary` builds.
 > The build system remains capable of building them, and I may begin doing so
@@ -444,7 +476,10 @@ If you choose to monitor a user-defined Docker network then
 any container connecting to the monitored network is a container that you want
 working DNS for.
 
-Leave `dnsmasq.updater.ip` unset to use the default.
+`dnsmasq.updater.ip` can be an IP address or the string `host`. Setting this to
+`host` will use the Swarm node's IP address (based on the device's hostname, as
+seen in the output from `docker info` under `Name`, which must must be
+resolvable). Leave `dnsmasq.updater.ip` unset to use the manager's default IP.
 
 Any defined `extra_hosts` will be given the IP from that definition.
 
