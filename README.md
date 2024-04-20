@@ -103,7 +103,7 @@ Remote hosts file (needed by --remote):
                         password for the dnsmasq server OR for an encrypted SSH key
 
 API server (needed by --manager):
-  --api_address PORT    address for API to listen on (default: '0.0.0.0')
+  --api_address IP      address for API to listen on (default: '0.0.0.0')
   --api_port PORT       port for API to listen on (default: '8080')
   --api_key KEY         API access key
   --api_backend STRING  API backend (refer to Bottle module docs for details)
@@ -287,26 +287,36 @@ services:
     networks:
       - traefik
 
-  # one whoami instance per node, exposed on port 8888
-  #
-  # NOTE: Round-robin DNS like this currently won't work, as the python-hosts
-  #       module doesn't allow duplicate hostnames. Ideally these containers would
-  #       come up with working round-robin DNS, but only the first or last node
-  #       (depending on if force=False or force=True in hosts.add, respectively)
-  #       that the manager sees gets a hosts entry.
-  #
-  #       For the foreseeable future, any load balancing will need to be done
-  #       through a frontend, using just a single external IP, not through
-  #       round-robin DNS..
-  whoami:
+  # a single container accessible through a traefik frontend
+  whoami-frontend:
     image: traefik/whoami:latest
-    hostname: whoami.swarm
+    hostname: whoami-frontend
+    deploy:
+      mode: replicated
+      replicas: 1
+    labels:
+      - dnsmasq.updater.enable=true # can be omitted, we're on DMU_NETWORK
+      - dnsmasq.updater.host=whoami-frontend.swarm # can be omitted, set by 'hostname' and traefik
+      - dnsmasq.updater.ip=<frontend_IP> # can be omitted, it's the DMU_IP default
+      - traefik.enable=true
+      - traefik.http.routers.whoami-frontend.rule=Host(`whoami-frontend.swarm`)
+      - traefik.http.routers.whoami-frontend.entryPoints=http,https
+      - traefik.http.services.whoami-frontend.loadbalancer.server.port=80
+    networks:
+      - traefik
+
+  # assuming nothing at the dnsmasq end precludes it, this should result in
+  # working round-robin DNS for this directly exposed service
+  whoami-global:
+    image: traefik/whoami:latest
+    hostname: whoami-global
     deploy:
       mode: global
     ports:
       - 8888:80
     labels:
       - dnsmasq.updater.enable=true
+      - dnsmasq.updater.host=whoami-global.swarm # can be omitted, set by 'hostname'
       - dnsmasq.updater.ip=host
 
 volumes:

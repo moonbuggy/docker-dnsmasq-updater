@@ -1,8 +1,9 @@
 #! /usr/bin/env bash
 # shellcheck shell=bash disable=SC2034
 
-MANIFEST_TOOL_REPO="estesp/manifest-tool"
 WHEEL_REPO="${WHEEL_REPO:-moonbuggy2000/python-alpine-wheels}"
+# MANIFEST_TOOL_GIT_REPO="estesp/manifest-tool"
+MANIFEST_TOOL_DOCKER_IMAGE="mplatform/manifest-tool"
 
 DATA_DIR='.build_data'
 QEMU_DIR='.qemu_static'
@@ -415,13 +416,14 @@ docker_container_contents () {
 		return
 	fi
 
-# this stopped working in a Docker version released 2023/2024
-#	docker save "${import_image}" | tar --wildcards -xf - -O -- */layer.tar | tar "${tar_args}" -ixf - -C "${output_dir}"
+	# this maybe stopped working in a Docker version released 2023/2024
+	docker save "${import_image}" | tar --wildcards -xf - -O -- */layer.tar | tar "${tar_args}" -ixf - -C "${output_dir}"
 
-	echo "FROM ${import_image}" >_tempDockerfile
-	docker build -q -o _tempContents -f _tempDockerfile . >/dev/null
-	cp _tempContents/* "${output_dir}"
-	rm -rf _tempContents _tempDockerfile >/dev/null 2>&1
+	# this is slower but will work instead
+	# echo "FROM ${import_image}" >_tempDockerfile
+	# docker build -q -o _tempContents -f _tempDockerfile . >/dev/null
+	# cp _tempContents/* "${output_dir}"
+	# rm -rf _tempContents _tempDockerfile >/dev/null 2>&1
 }
 
 ## parse YAML configuration
@@ -487,12 +489,9 @@ get_manifest_tool () {
 	if [ -n "${existing_tool}" ]; then
 		echo "${existing_tool}"
 	else
-		if [ ! -f manifest-tool ]; then
-			LATEST_MANIFEST_TOOL="$(git_latest_release "${MANIFEST_TOOL_REPO}")"
-			curl -sLo "manifest-tool" "https://github.com/${MANIFEST_TOOL_REPO}/releases/download/${LATEST_MANIFEST_TOOL}/manifest-tool-linux-$(get_this_arch)"
-		fi
-		chmod a+x "manifest-tool"
-		echo './manifest-tool'
+		# the binaries are no longer available indivudally, only as an archive
+		# it's easier to use the Docker image than bother untaring and copying files
+		echo "docker run --rm ${MANIFEST_TOOL_DOCKER_IMAGE}"
 	fi
 }
 
@@ -518,7 +517,8 @@ get_manifest() {
 	if [ ! -f "${manifest_file}" ] || [ "$(( $(date +"%s") - $(date -r "${manifest_file}" +"%s") ))" -gt "${CACHE_EXPIRY}" ]; then
 		>&2 printf 'Fetching manifest: %s..           \b\b\b\b\b\b\b\b\b\b' "${source_image}"
 
-		manifest_cmd=("$(get_manifest_tool)" 'inspect' "${source_image}")
+		IFS=' ' read -a manifest_cmd <<< "$(get_manifest_tool)"
+		manifest_cmd+=('inspect' "${source_image}")
 		# pretty_manifest_cmd="$(echo "${manifest_cmd[*]}" | sed -r -e "s/(--)/\\\ \n\t\1/g")"
 		# >&2 printf '\n--- manifest command ---\n%s\n' "${pretty_manifest_cmd}"
 

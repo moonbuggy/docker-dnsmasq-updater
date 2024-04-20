@@ -152,22 +152,21 @@ class APIClientHandler():
         """Get the JWT authentication token."""
         self.logger.info('Getting JWT token.')
 
-        post_data = {
+        header_data = {
             "Content-Type": "application/json",
-            'client_id': self.client_id,
-            'client_secret': scrypt(str.encode(self.params.api_key),
-                                    salt=str.encode(self.client_id),
-                                    n=2**14, r=8, p=1, dklen=32).hex()
+            'clientId': self.client_id,
+            'clientSecret': scrypt(str.encode(self.params.api_key),
+                                   salt=str.encode(self.client_id),
+                                   n=2**14, r=8, p=1, dklen=32).hex()
         }
-
         req = urllib.request.Request(
-            self.api_url + 'auth', headers=post_data, method='POST')
+            self.api_url + 'auth', headers=header_data, method='POST')
 
         try:
             with urllib.request.urlopen(req) as resp:
                 response_body = json.loads(resp.read().decode('utf-8'))
                 self.token = f"{response_body['type']} {response_body['access_token']}"
-        except urllib.error.HTTPError as err:
+        except (urllib.error.HTTPError, json.decoder.JSONDecodeError) as err:
             self.logger.error('Error authenticating: %s', err)
 
     def do_request(self, path, method='GET', data=None):
@@ -543,9 +542,13 @@ class ConfigHandler():
             'api_check': 60,
             'log_level': self.log_level,
             'ready_fd': '',
-            'this_host': os.environ['HOSTNAME'],
             'clean_on_exit': True
         }
+
+        try:
+            self.defaults['this_host'] = os.environ['HOSTNAME']
+        except KeyError:
+            self.defaults['this_host'] = os.uname()[1]  # pylint: disable=no-member
 
         self.args = []
         self.config_parser = argparse.ArgumentParser(

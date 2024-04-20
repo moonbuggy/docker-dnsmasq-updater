@@ -27,6 +27,7 @@ from typing import Dict
 
 from python_hosts import Hosts, HostsEntry  # type: ignore[import-untyped]
 import python_hosts.exception  # type: ignore[import-untyped]
+from python_hosts.utils import dedupe_list  # type: ignore[import-untyped]
 from paramiko.client import SSHClient, AutoAddPolicy
 from paramiko import RSAKey, DSSKey
 from paramiko.ssh_exception import \
@@ -46,6 +47,98 @@ DEFAULT_LOG_LEVEL = logging.INFO
 
 BLOCK_START = '### docker dnsmasq updater start ###'
 BLOCK_END = '### docker dnsmasq updater end ###'
+
+
+class PatchedHosts(Hosts):
+    """Redefine hosts.add() in python-hosts to allow duplicate addresses."""
+
+    def add(self, entries=None, force=False, allow_address_duplication=False,
+            merge_names=False, allow_name_duplication=False):
+        """Add instances of HostsEntry to the instance of Hosts.
+
+        Redefined to add 'allow_name_duplication', required for round-robin DNS
+        """
+        ipv4_count = 0
+        ipv6_count = 0
+        comment_count = 0
+        invalid_count = 0
+        duplicate_count = 0
+        replaced_count = 0
+        import_entries = []
+        existing_addresses = [x.address for x in self.entries if x.address]
+        existing_names = []
+        for item in self.entries:
+            if item.names:
+                existing_names.extend(item.names)
+        existing_names = dedupe_list(existing_names)
+        for entry in entries:
+            if entry.entry_type == 'comment':
+                entry.comment = entry.comment.strip()
+                if entry.comment[0] != "#":
+                    entry.comment = "# " + entry.comment
+                import_entries.append(entry)
+            elif entry.address in ('0.0.0.0', '127.0.0.1') \
+                    or allow_address_duplication or allow_name_duplication:
+                # Allow duplicates entries for addresses used for adblocking
+                if set(entry.names).intersection(existing_names):
+                    if allow_name_duplication:
+                        import_entries.append(entry)
+                    elif force:
+                        for name in entry.names:
+                            self.remove_all_matching(name=name)
+                        import_entries.append(entry)
+                    else:
+                        duplicate_count += 1
+                else:
+                    import_entries.append(entry)
+            elif entry.address in existing_addresses:
+                if not any((force, merge_names)):
+                    duplicate_count += 1
+                elif merge_names:
+                    # get the last entry with matching address
+                    entry_names = []
+                    for existing_entry in self.entries:
+                        if entry.address == existing_entry.address:
+                            entry_names = existing_entry.names
+                            break
+                    # merge names with that entry
+                    merged_names = list(set(entry.names + entry_names))
+                    # remove all matching
+                    self.remove_all_matching(address=entry.address)
+                    # append merged entry
+                    entry.names = merged_names
+                    import_entries.append(entry)
+                elif force:
+                    self.remove_all_matching(address=entry.address)
+                    replaced_count += 1
+                    import_entries.append(entry)
+            elif set(entry.names).intersection(existing_names):
+                if not force:
+                    duplicate_count += 1
+                else:
+                    for name in entry.names:
+                        self.remove_all_matching(name=name)
+                    replaced_count += 1
+                    import_entries.append(entry)
+            else:
+                import_entries.append(entry)
+
+        for item in import_entries:
+            if item.entry_type == 'comment':
+                comment_count += 1
+                self.entries.append(item)
+            elif item.entry_type == 'ipv4':
+                ipv4_count += 1
+                self.entries.append(item)
+            elif item.entry_type == 'ipv6':
+                ipv6_count += 1
+                self.entries.append(item)
+        return {'comment_count': comment_count,
+                'ipv4_count': ipv4_count,
+                'ipv6_count': ipv6_count,
+                'invalid_count': invalid_count,
+                'duplicate_count': duplicate_count,
+                'replaced_count': replaced_count}
 
 
 class Formatter(logging.Formatter):
@@ -341,7 +434,11 @@ class HostsHandler():
         self.output_handler = output_handler
         self.temp_file = output_handler.temp_file
         self.delayed_write = ResettableTimer(self.params.local_write_delay, self.write_hosts)
-        self.hosts = Hosts(path='/dev/null')
+
+        # python-hosts doesn't allow duplicate hostnames, so Hosts.add() needs to
+        # be redefined to allow round robin DNS
+        # self.hosts = Hosts(path='/dev/null')
+        self.hosts = PatchedHosts(path='/dev/null')
 
     def parse_hostnames(self, hostnames, id_string):
         """
@@ -406,11 +503,12 @@ class HostsHandler():
                     except python_hosts.exception.InvalidIPv4Address:
                         self.logger.error('Skipping invalid IP address: %s', host_ip)
                     else:
-                        self.hosts.add([hostentry], force=True, allow_address_duplication=True)
+                        self.hosts.add([hostentry], force=True,
+                                       allow_address_duplication=True,
+                                       allow_name_duplication=True)
 
                 if do_write:
                     self.queue_write()
-
                 self.logger.info('Added host(s): %s',
                                  ', '.join(sum(parsed_hostnames.values(), [])))
 
@@ -493,13 +591,19 @@ class APIServerHandler(Bottle):
         """
         Authenticate a node.
 
-        request: {'client_id': <client_id>, 'client_secret': <password>}
+        request: {'clientId': <client_id>, 'clientSecret': <password>}
         response: {'access_token': <token>, 'type': 'bearer'}
         """
-        client_id = request.headers.get('client_id')
-        client_secret = request.headers.get('client_secret')
+        client_id = request.headers.get('clientId')
+        client_secret = request.headers.get('clientSecret')
 
-        kdf = Scrypt(salt=str.encode(client_id), length=32, n=2**14, r=8, p=1)
+        try:
+            kdf = Scrypt(salt=str.encode(client_id), length=32, n=2**14, r=8, p=1)
+        except TypeError as err:
+            self.logger.error('Invalid auth request: %s', err)
+            response.status = 401
+            return "Unauthorized."
+
         try:
             kdf.verify(str.encode(self.params.api_key), bytes.fromhex(client_secret))
         except cryptography.exceptions.InvalidKey as err:
@@ -553,8 +657,12 @@ class APIServerHandler(Bottle):
         self.logger.info('Starting API..')
 
         sys.argv = sys.argv[:1]
-        self.run(host=self.params.api_address, server=self.params.api_backend,
-                 port=self.params.api_port, debug=self.params.debug)
+        if self.params.api_backend is None:
+            self.run(host=self.params.api_address, port=self.params.api_port,
+                     debug=self.params.debug)
+        else:
+            self.run(host=self.params.api_address, server=self.params.api_backend,
+                     port=self.params.api_port, debug=self.params.debug)
 
 
 class DockerHandler():
@@ -791,7 +899,7 @@ class ConfigHandler():
             'api_address': '0.0.0.0',
             'api_port': '8080',
             'api_key': '',
-            'api_backend': '',
+            'api_backend': None,
             'log_level': self.log_level,
             'delay': 10,
             'local_write_delay': 3,
@@ -943,7 +1051,7 @@ class ConfigHandler():
         api_group = parser.add_argument_group(
             title='API server (needed by --manager)')
         api_group.add_argument(
-            '--api_address', action='store', metavar='PORT',
+            '--api_address', action='store', metavar='IP',
             help='address for API to listen on (default: \'%(default)s\')')
         api_group.add_argument(
             '--api_port', action='store', metavar='PORT',
