@@ -416,6 +416,8 @@ environment variables.
 *   `DMU_DEBUG`          - set _True_ to enable debug log output
 *   `TZ`		             - set timezone
 
+The `TZ` parameter is only used to set timestamps on log messages.
+
 ### Setup on dnsmasq server
 Docker Dnsmasq Updater won't track changes other software (i.e _dnsmasq_) might
 make to the hosts file. Thus, to avoid conflicts, it's best to give Docker

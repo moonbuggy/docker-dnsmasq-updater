@@ -27,7 +27,6 @@ from typing import Dict
 
 from python_hosts import Hosts, HostsEntry  # type: ignore[import-untyped]
 import python_hosts.exception  # type: ignore[import-untyped]
-from python_hosts.utils import dedupe_list  # type: ignore[import-untyped]
 from paramiko.client import SSHClient, AutoAddPolicy
 from paramiko import RSAKey, DSSKey
 from paramiko.ssh_exception import \
@@ -47,98 +46,6 @@ DEFAULT_LOG_LEVEL = logging.INFO
 
 BLOCK_START = '### docker dnsmasq updater start ###'
 BLOCK_END = '### docker dnsmasq updater end ###'
-
-
-class PatchedHosts(Hosts):
-    """Redefine hosts.add() in python-hosts to allow duplicate addresses."""
-
-    def add(self, entries=None, force=False, allow_address_duplication=False,
-            merge_names=False, allow_name_duplication=False):
-        """Add instances of HostsEntry to the instance of Hosts.
-
-        Redefined to add 'allow_name_duplication', required for round-robin DNS
-        """
-        ipv4_count = 0
-        ipv6_count = 0
-        comment_count = 0
-        invalid_count = 0
-        duplicate_count = 0
-        replaced_count = 0
-        import_entries = []
-        existing_addresses = [x.address for x in self.entries if x.address]
-        existing_names = []
-        for item in self.entries:
-            if item.names:
-                existing_names.extend(item.names)
-        existing_names = dedupe_list(existing_names)
-        for entry in entries:
-            if entry.entry_type == 'comment':
-                entry.comment = entry.comment.strip()
-                if entry.comment[0] != "#":
-                    entry.comment = "# " + entry.comment
-                import_entries.append(entry)
-            elif entry.address in ('0.0.0.0', '127.0.0.1') \
-                    or allow_address_duplication or allow_name_duplication:
-                # Allow duplicates entries for addresses used for adblocking
-                if set(entry.names).intersection(existing_names):
-                    if allow_name_duplication:
-                        import_entries.append(entry)
-                    elif force:
-                        for name in entry.names:
-                            self.remove_all_matching(name=name)
-                        import_entries.append(entry)
-                    else:
-                        duplicate_count += 1
-                else:
-                    import_entries.append(entry)
-            elif entry.address in existing_addresses:
-                if not any((force, merge_names)):
-                    duplicate_count += 1
-                elif merge_names:
-                    # get the last entry with matching address
-                    entry_names = []
-                    for existing_entry in self.entries:
-                        if entry.address == existing_entry.address:
-                            entry_names = existing_entry.names
-                            break
-                    # merge names with that entry
-                    merged_names = list(set(entry.names + entry_names))
-                    # remove all matching
-                    self.remove_all_matching(address=entry.address)
-                    # append merged entry
-                    entry.names = merged_names
-                    import_entries.append(entry)
-                elif force:
-                    self.remove_all_matching(address=entry.address)
-                    replaced_count += 1
-                    import_entries.append(entry)
-            elif set(entry.names).intersection(existing_names):
-                if not force:
-                    duplicate_count += 1
-                else:
-                    for name in entry.names:
-                        self.remove_all_matching(name=name)
-                    replaced_count += 1
-                    import_entries.append(entry)
-            else:
-                import_entries.append(entry)
-
-        for item in import_entries:
-            if item.entry_type == 'comment':
-                comment_count += 1
-                self.entries.append(item)
-            elif item.entry_type == 'ipv4':
-                ipv4_count += 1
-                self.entries.append(item)
-            elif item.entry_type == 'ipv6':
-                ipv6_count += 1
-                self.entries.append(item)
-        return {'comment_count': comment_count,
-                'ipv4_count': ipv4_count,
-                'ipv6_count': ipv6_count,
-                'invalid_count': invalid_count,
-                'duplicate_count': duplicate_count,
-                'replaced_count': replaced_count}
 
 
 class Formatter(logging.Formatter):
@@ -434,11 +341,7 @@ class HostsHandler():
         self.output_handler = output_handler
         self.temp_file = output_handler.temp_file
         self.delayed_write = ResettableTimer(self.params.local_write_delay, self.write_hosts)
-
-        # python-hosts doesn't allow duplicate hostnames, so Hosts.add() needs to
-        # be redefined to allow round robin DNS
-        # self.hosts = Hosts(path='/dev/null')
-        self.hosts = PatchedHosts(path='/dev/null')
+        self.hosts = Hosts(path='/dev/null')
 
     def parse_hostnames(self, hostnames, id_string):
         """
@@ -503,9 +406,13 @@ class HostsHandler():
                     except python_hosts.exception.InvalidIPv4Address:
                         self.logger.error('Skipping invalid IP address: %s', host_ip)
                     else:
-                        self.hosts.add([hostentry], force=True,
-                                       allow_address_duplication=True,
-                                       allow_name_duplication=True)
+                        if self.params.mode == 'manager':
+                            self.hosts.add([hostentry],
+                                           allow_address_duplication=True,
+                                           allow_name_duplication=True)
+                        else:
+                            self.hosts.add([hostentry], force=True,
+                                           allow_address_duplication=True)
 
                 if do_write:
                     self.queue_write()
