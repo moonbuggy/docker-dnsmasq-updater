@@ -55,7 +55,7 @@ RUN if ! python3 -m pip install --only-binary=:all: --find-links "/${IMPORTS_DIR
 		echo "ERROR: Could not build with binary wheels. Attempting to build from source.."; \
 		if [ ! -z "${APK_PROXY}" ]; then \
 			alpine_minor_ver="$(grep -o 'VERSION_ID.*' /etc/os-release | grep -oE '([0-9]+\.[0-9]+)')"; \
-	    mv /etc/apk/repositories /etc/apk/repositories.bak; \
+			mv /etc/apk/repositories /etc/apk/repositories.bak; \
 			echo "${APK_PROXY}/alpine/v${alpine_minor_ver}/main" >/etc/apk/repositories; \
 			echo "${APK_PROXY}/alpine/v${alpine_minor_ver}/community" >>/etc/apk/repositories; \
 		fi \

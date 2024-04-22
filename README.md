@@ -241,12 +241,12 @@ _/app/keys/_ folder.
 #### Swarm deployment
 ##### docker-compose.yml
 ```yaml
-version: '3.8'
+version: '3.7'
 
 services:
   dnsmasq-updater:
     image: moonbuggy2000/dnsmasq-updater:script
-    hostname: dmu.swarm
+    hostname: dmu
     deploy:
       mode: replicated
       replicas: 1
@@ -279,7 +279,7 @@ services:
     environment:
       - DMU_DEBUG=false
       - DMU_NETWORK=traefik
-      - DMU_API_SERVER=dmu.swarm
+      - DMU_API_SERVER=dmu
       - DMU_API_PORT=8080
       - DMU_API_KEY=<api_key>
     volumes:
@@ -294,14 +294,15 @@ services:
     deploy:
       mode: replicated
       replicas: 1
+      labels:
+        - traefik.enable=true
+        - traefik.http.routers.whoami-frontend.rule=Host(`whoami-frontend.swarm`)
+        - traefik.http.routers.whoami-frontend.entryPoints=http,https
+        - traefik.http.services.whoami-frontend.loadbalancer.server.port=80
     labels:
       - dnsmasq.updater.enable=true # can be omitted, we're on DMU_NETWORK
       - dnsmasq.updater.host=whoami-frontend.swarm # can be omitted, set by 'hostname' and traefik
       - dnsmasq.updater.ip=<frontend_IP> # can be omitted, it's the DMU_IP default
-      - traefik.enable=true
-      - traefik.http.routers.whoami-frontend.rule=Host(`whoami-frontend.swarm`)
-      - traefik.http.routers.whoami-frontend.entryPoints=http,https
-      - traefik.http.services.whoami-frontend.loadbalancer.server.port=80
     networks:
       - traefik
 
@@ -334,9 +335,8 @@ to monitor it for activity, it's convenient to stick the manager on this network
 as well and use it for API communication.
 
 The manager's `DMU_IP` default IP should point to a frontend/reverse proxy,
-Traefik or otherwise. It's possible to override the default IP on a
-per-container basis with with a `dnsmasq.updater.ip` label on individual
-containers.
+Traefik or otherwise. It's possible to override the default IP on a per-service
+basis with with a `dnsmasq.updater.ip` label on individual services.
 
 To meet the manager's constraints, the `dnsmasq-updater.manager` label will need
 to be applied to the to the chosen node:
@@ -348,7 +348,7 @@ See below for a detailed description of available
 The Agent should be allowed to restart freely since, by design, it will exit
 upon encountering a variety of otherwise non-fatal errors. This is a simple way
 to trigger a fresh initialization and ensure the manager has the full picture if
-it is restarted or communications are interrupted for whatever reason.
+it's restarted or communications are interrupted for whatever reason.
 
 #### Image Tags
 The default `latest` tag and the `script` tag point to the standalone/manager
@@ -360,7 +360,7 @@ version number by itself to get `<version>-script`.
 > [!NOTE]
 > After upgrading the Nuitka version, binary builds are currently larger than the
 > un-compiled images. There's also an issue building gunicorn (which is used as
-> the API backend in the image) that I've not bothered investigating.
+> the API backend in the manager image) that I've not bothered investigating.
 >
 > As a result, for the time being at least, I've discontinued the `binary` builds.
 > The build system remains capable of building them, and I may begin doing so
@@ -415,6 +415,8 @@ environment variables.
 *   `DMU_CLEAN_ON_EXIT`  - delete this device's hosts from the API when the Agent shuts down (default: _True_)
 *   `DMU_DEBUG`          - set _True_ to enable debug log output
 *   `TZ`		             - set timezone
+
+The `TZ` parameter is only used to set timestamps on log messages.
 
 ### Setup on dnsmasq server
 Docker Dnsmasq Updater won't track changes other software (i.e _dnsmasq_) might
