@@ -254,7 +254,7 @@ services:
         constraints:
           # use a label to choose a specific Swarm node for the manager
           # this ensures the volume for /app/keys will be present
-          - node.labels.dnsmasq-updater == true
+          - node.labels.dnsmasq-updater.manager == true
     environment:
       - DMU_DEBUG=false
       - DMU_MODE=manager
@@ -307,7 +307,7 @@ services:
       - traefik
 
   # assuming nothing at the dnsmasq end precludes it, this should result in
-  # working round-robin DNS for this directly exposed service
+  # working round-robin DNS for this globally deployed and directly exposed service
   whoami-global:
     image: traefik/whoami:latest
     hostname: whoami-global
@@ -429,35 +429,62 @@ If your _dnsmasq_ server is a router with external storage attached it makes
 sense to keep the hosts file the updater generates there, to minimize writes to
 the router's onboard storage.
 
+If you're using a key instead of a password you'll need to add the appropriate
+public key to _~/.ssh/authorized_keys_ on the router (possibly via the router's
+webUI rather than the shell).
+
+#### AsusWRT-Merlin/Entware example
 As an example, if you're using AsusWRT-Merlin/Entware, you can easily configure
-the router to include this external file by writing to _/opt/etc/hosts_ and
-adding the following to _/jffs/scripts/hosts.postconf_:
+the router to include this external file by writing to _/opt/etc/hosts.docker_
+and adding the following to _/jffs/scripts/hosts.postconf_:
 
 ```sh
 # for remote hosts updates
-if [ -f /opt/etc/hosts ]; then
-  cat "/opt/etc/hosts" >> "$CONFIG"
+if [ -f /opt/etc/hosts.docker ]; then
+  cat "/opt/etc/hosts.docker" >> "$CONFIG"
 fi
 ```
 
-As _dnsmasq_ may start before _/opt_ is mounted, _dnsmasq_ should be restarted in
-_/jffs/scripts/post-mount_, to ensure container name resolution functions after
-a router reboot:
+This will add the host definitions in _hosts.docker_ to _/etc/hosts_, which is
+convenient if we want all host definitions in a single file for easy reference.
+
+Alternatively, the `addn-hosts` method can be implemented through
+_/jffs/configs/dnsmasq.conf.add_:
+
+```sh
+addn-hosts=/opt/etc/hosts.docker
+```
+
+This will result in _dnsmasq_ reading the _hosts.docker_ file directly.
+
+In either case, as _dnsmasq_ may start before _/opt_ is mounted, _dnsmasq_
+should be restarted in _/jffs/scripts/post-mount_, to ensure container name
+resolution functions after a router reboot:
 
 ```sh
 if [ -d "$1/entware" ] ; then
   ln -nsf $1/entware /tmp/opt
-
   service restart_dnsmasq
 fi
 ```
 
 Relevant configuration parameters for Docker Dnsmasq Updater in this scenario
-would be `--remote_file /opt/etc/hosts --remote_cmd 'service restart_dnsmasq'`.
+would be `--remote_file /opt/etc/hosts.docker --restart_cmd 'service restart_dnsmasq'`.
 
-If you're using a key instead of a password you'll need to add the appropriate
-public key to _~/.ssh/authorized_keys_ on the router (possibly via the router's
-webUI rather than the shell).
+#### Restart command
+If _pkill_ is available on the _dnsmasq_ server, it may be better to send a
+SIGHUP to trigger _dnsamsq_ to clear the cache and re-read the hosts file(s)
+without restarting. In this scenario the default restart command would be
+overridden with `--restart_cmd 'pkill -HUP dnsmasq'`.
+
+However, if you're incorporating the _hosts.docker_ file through an init system
+(as in the _hosts.postconf_ method in the example above), sending a SIGHUP to
+_dnsmasq_ will bypass that init system and thus won't incorporate changes in the
+file. A restart through the init system (i.e.
+`--restart_cmd 'service restart_dnsmasq`) is required in this case.
+
+A SIGHUP would be viable if using `addn-hosts` to let _dnsmasq_ read the file
+directly.
 
 ### Setup for other Docker containers
 To enable Docker Dnsmasq Updater for an individual container there are three
