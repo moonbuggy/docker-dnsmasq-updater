@@ -417,13 +417,14 @@ docker_container_contents () {
 	fi
 
 	# this maybe stopped working in a Docker version released 2023/2024
-	docker save "${import_image}" | tar --wildcards -xf - -O -- */layer.tar | tar "${tar_args}" -ixf - -C "${output_dir}"
-
-	# this is slower but will work instead
-	# echo "FROM ${import_image}" >_tempDockerfile
-	# docker build -q -o _tempContents -f _tempDockerfile . >/dev/null
-	# cp _tempContents/* "${output_dir}"
-	# rm -rf _tempContents _tempDockerfile >/dev/null 2>&1
+	if [ ! $(docker save "${import_image}" | tar --wildcards -xf - -O -- */layer.tar | tar "${tar_args}" -ixf - -C "${output_dir}") ]; then
+		# this is slower but will work instead
+		echo "Using alternate import method.."
+		echo "FROM ${import_image}" >_tempDockerfile
+		docker build -q -o _tempContents -f _tempDockerfile . >/dev/null
+		cp _tempContents/* "${output_dir}"
+		rm -rf _tempContents _tempDockerfile >/dev/null 2>&1
+	fi
 }
 
 ## parse YAML configuration

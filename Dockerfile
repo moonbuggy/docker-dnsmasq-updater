@@ -22,13 +22,13 @@ ENV	VIRTUAL_ENV="${VIRTUAL_ENV}" \
 
 # use PyPi and APK caches, if provided
 ARG PYPI_INDEX="https://pypi.org/simple"
-ARG ARG APK_PROXY=""
-RUN (mv /etc/pip.conf /etc/pip.conf.bak || true) \
+ARG APK_PROXY=""
+RUN (mv /etc/pip.conf /etc/pip.conf.bak 2>/dev/null || true) \
 	&& printf '%s\n' '[global]' "  index-url = ${PYPI_INDEX}" \
 		"  trusted-host = $(echo "${PYPI_INDEX}" | cut -d'/' -f3 | cut -d':' -f1)" \
 		>/etc/pip.conf
 
-RUN python3 -m pip install --upgrade virtualenv \
+RUN python3 -m pip install virtualenv \
 	&& python3 -m virtualenv --download "${BUILDER_ROOT}${VIRTUAL_ENV}"
 
 # Python wheels from pre_build

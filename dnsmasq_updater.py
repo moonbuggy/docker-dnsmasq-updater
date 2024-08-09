@@ -979,12 +979,12 @@ class ConfigHandler():
         if self.args.ip == '':
             self.logger.error('No host IP specified.')
             sys.exit(1)
-        else:
-            try:
-                ipaddress.ip_address(self.args.ip)
-            except ValueError:
-                self.logger.error('Specified host IP (%s) is invalid.', self.args.ip)
-                sys.exit(1)
+
+        try:
+            ipaddress.ip_address(self.args.ip)
+        except ValueError:
+            self.logger.error('Specified host IP (%s) is invalid.', self.args.ip)
+            sys.exit(1)
 
         if self.args.file == '':
             self.logger.error('No hosts file specified.')
