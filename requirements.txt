@@ -1,5 +1,5 @@
 bottle==0.12.25
 bottlejwt==1.0.2
-docker==7.0.0
-paramiko==3.4.0
+docker==7.1.0
+paramiko==3.4.1
 python-hosts==1.0.6
