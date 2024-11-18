@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#! /usr/bin/env python3
 # pylint: disable=too-many-lines
 """
 Docker Dnsmasq Updater.
@@ -30,7 +30,7 @@ import python_hosts.exception  # type: ignore[import-untyped]
 from paramiko.client import SSHClient, AutoAddPolicy
 from paramiko import RSAKey, DSSKey
 from paramiko.ssh_exception import \
-    SSHException, AuthenticationException, PasswordRequiredException
+    SSHException, AuthenticationException, PasswordRequiredException, BadHostKeyException
 import docker  # type: ignore[import-untyped]
 
 from bottlejwt import JwtPlugin  # type: ignore[import-untyped]
@@ -180,7 +180,7 @@ class LocalHandler():
         restart_cmd = self.params.restart_cmd.strip('\'"')
 
         try:
-            subprocess.run(restart_cmd, check=True)
+            subprocess.run(restart_cmd.split(), check=True)
         except subprocess.CalledProcessError:
             self.logger.error(
                 'CalledProcessError: Failed to execute restart command: %s', restart_cmd)
@@ -274,7 +274,7 @@ class RemoteHandler():
             pass_params['username'] = self.params.login
 
             if self.key:
-                pass_params['key_filename'] = self.params.key
+                pass_params['pkey'] = self.key
             else:
                 pass_params['password'] = self.params.password
 
@@ -282,6 +282,9 @@ class RemoteHandler():
                 self.ssh.connect(self.params.server_ip, **pass_params)
             except AuthenticationException:
                 self.logger.error('Could not authenticate with remote device.')
+                sys.exit(1)
+            except BadHostKeyException:
+                self.logger.error('Host key does not match expected key.')
                 sys.exit(1)
 
     def close_ssh(self):
@@ -307,12 +310,17 @@ class RemoteHandler():
 
         with open(self.temp_file.name, 'r', encoding="utf-8") as temp_file:
             hosts_block = BLOCK_START + '\n' + temp_file.read() + BLOCK_END
-            exec_return = self.ssh.exec_command(
-                'echo -e "' + hosts_block + '" >' + self.params.file)[1]
-            if exec_return.channel.recv_exit_status():
-                self.logger.error('Could not write remote file.')
 
-        self.exec_restart_command()
+            try:
+                exec_return = self.ssh.exec_command(
+                    'echo -e "' + hosts_block + '" >' + self.params.file)[1]
+                if exec_return.channel.recv_exit_status():
+                    self.logger.error('Could not write hosts file.')
+                else:
+                    self.exec_restart_command()
+            except EOFError:
+                self.logger.error('Could not write hosts file.')
+
         self.close_ssh()
 
     def exec_restart_command(self):
