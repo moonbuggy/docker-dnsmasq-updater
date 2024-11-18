@@ -13,41 +13,41 @@ cat "${ARCH_YAML}" > "${CONFIG_YAML}" || exit 0
 #
 while read -r line; do declare "${line}"; done < <(parse_yaml "${ARCH_YAML}")
 
-##	call any post_checkout_start() from build.conf
+##  call any post_checkout_start() from build.conf
 #
 ifFunc post_checkout_start && post_checkout_start
 
 ## parse Docker environment variables
 #
 case "${DOCKER_TAG##*-}" in
-	i*86|amd64|arm*|ppc64*|mips*|riscv64|s390x)
-		[ -z "${TARGET_TAG+set}" ] && \
-			TARGET_TAG="${DOCKER_TAG%-*}"
-		add_param "${DOCKER_TAG##*-}" 'BUILD_ARCH'
-		[ -z "${SINGLE_ARCH_BUILD+set}" ] && SINGLE_ARCH_BUILD=1
-		;;
-	*)
-		[ -z "${TARGET_TAG+set}" ] && \
-			TARGET_TAG="${DOCKER_TAG}"
-		;;
+  i*86|amd64|arm*|ppc64*|mips*|riscv64|s390x)
+    [ -z "${TARGET_TAG+set}" ] && \
+      TARGET_TAG="${DOCKER_TAG%-*}"
+    add_param "${DOCKER_TAG##*-}" 'BUILD_ARCH'
+    [ -z "${SINGLE_ARCH_BUILD+set}" ] && SINGLE_ARCH_BUILD=1
+    ;;
+  *)
+    [ -z "${TARGET_TAG+set}" ] && \
+      TARGET_TAG="${DOCKER_TAG}"
+    ;;
 esac
 
 ## parse 'latest' tag
 #
 if [ "${TARGET_TAG}" = 'latest' ]; then
-	[ -z "${SOURCE_LATEST}" ] && \
-		echo "Getting latest source tag.." && \
-		SOURCE_LATEST="$(docker_api_latest "${SOURCE_REPO}")"
+  [ -z "${SOURCE_LATEST}" ] && \
+    echo "Getting latest source tag.." && \
+    SOURCE_LATEST="$(docker_api_latest "${SOURCE_REPO}")"
 
-	[ -n "${SOURCE_LATEST}" ] && \
-		add_param "${SOURCE_LATEST}" 'SOURCE_LATEST' && \
-		TARGET_TAG="${SOURCE_LATEST}"
+  [ -n "${SOURCE_LATEST}" ] && \
+    add_param "${SOURCE_LATEST}" 'SOURCE_LATEST' && \
+    TARGET_TAG="${SOURCE_LATEST}"
 fi
 
-##	get TARGET_TAG from get_target_tag, if set in build.conf
+##  get TARGET_TAG from get_target_tag, if set in build.conf
 ifFuncSetVar TARGET_TAG get_target_tag
 
-##	get SOURCE_TAG from get_source_tag, if set in build.conf
+##  get SOURCE_TAG from get_source_tag, if set in build.conf
 ifFuncSetVar SOURCE_TAG get_source_tag
 
 [ -z ${SOURCE_TAG+set} ] && SOURCE_TAG="${TARGET_TAG}"
@@ -55,11 +55,11 @@ add_param "${SOURCE_TAG}" 'SOURCE_TAG'
 
 # set SOURCE_IMAGE, pull manifest if we're not pulling from arch-specific repos
 if [ -n "${SOURCE_REPO}" ]; then
-	SOURCE_IMAGE="${SOURCE_REPO}:${SOURCE_TAG}"
-	[ -z "${SOURCE_ARCH_PREFIX+set}" ] \
-		&& { SOURCE_MANIFEST="$(get_manifest "${SOURCE_IMAGE}")" || { echo "Exiting."; exit 1; }; }
+  SOURCE_IMAGE="${SOURCE_REPO}:${SOURCE_TAG}"
+  [ -z "${SOURCE_ARCH_PREFIX+set}" ] \
+    && { SOURCE_MANIFEST="$(get_manifest "${SOURCE_IMAGE}")" || { echo "Exiting."; exit 1; }; }
 else
-	echo "No source image, no manifest to pull."
+  echo "No source image, no manifest to pull."
 fi
 
 print_param "${DOCKER_TAG}" 'Docker tag'
@@ -70,59 +70,76 @@ add_print_param "${TARGET_TAG}" 'TARGET_TAG' 'Target tag'
 # use BUILD_ARCH if set
 #
 if [ -n "${BUILD_ARCH}" ]; then
-	build_arches="${BUILD_ARCH}"
-	for excluded_arch in ${EXCLUDED_ARCHES:-}; do
-		build_arches="$(echo "${build_arches}" | xargs -n1 | grep -vP "${excluded_arch}$" | xargs)"
-	done
+  build_arches="${BUILD_ARCH}"
+  for excluded_arch in ${EXCLUDED_ARCHES:-}; do
+    build_arches="$(echo "${build_arches}" | xargs -n1 | grep -vP "${excluded_arch}$" | xargs)"
+  done
 else
-	# configured_arches is populated from arch.yaml or INCLUDED_ARCHES
-	# and then EXCLUDED_ARCHES is applied
-	if [ ! -z "${INCLUDED_ARCHES+set}" ]; then
-		configured_arches="$(echo ${INCLUDED_ARCHES} | sort -u | xargs)"
-	else
-		configured_arches="$(sed -En 's/(^\w*):\s*$/\1/p' "${ARCH_YAML}" | sort -u | xargs)"
-	fi
-	print_param "${configured_arches}" 'Configured arches'
+  # configured_arches is populated from arch.yaml or INCLUDED_ARCHES
+  # and then EXCLUDED_ARCHES is applied
+  if [ ! -z "${INCLUDED_ARCHES+set}" ]; then
+    configured_arches="$(echo ${INCLUDED_ARCHES} | sort -u | xargs)"
+  else
+    configured_arches="$(sed -En 's/(^\w*):\s*$/\1/p' "${ARCH_YAML}" | sort -u | xargs)"
+  fi
+  print_param "${configured_arches}" 'Configured arches'
 
-	if [ ! -z "${EXCLUDED_ARCHES+set}" ]; then
-		print_param "${EXCLUDED_ARCHES}" 'Excluded arches'
-		for excluded in ${EXCLUDED_ARCHES}; do
-			configured_arches="$(echo "${configured_arches}" | xargs -n1 | grep -v "^${excluded}$" | sort -u | xargs)"
-		done
-	fi
+  if [ ! -z "${EXCLUDED_ARCHES+set}" ]; then
+    print_param "${EXCLUDED_ARCHES}" 'Excluded arches'
+    for excluded in ${EXCLUDED_ARCHES}; do
+      configured_arches="$(echo "${configured_arches}" | xargs -n1 | grep -v "^${excluded}$" | sort -u | xargs)"
+    done
+  fi
 
-	# find available architectures in source repo(s)
-	#
-	# if nothing is cached and SOURCE_ARCH_PREFIX is set, pull manifest from each
-	# of the '<arch>/' repos (e.g. arm32v7/<image>, s390x/<image>, etc..)
-	#
-	# otherwise use the multi-arch manifest we pulled earlier, SOURCE_MANIFEST
-	#
-	if [ -n "${SOURCE_ARCHES:-}" ]; then
-		source_arches="${SOURCE_ARCHES}"
-	elif [ ! -z "${SOURCE_ARCH_PREFIX+set}" ]; then
-		unset source_arches
-		for arch in ${configured_arches}; do
-			arch_prefix_var="${arch}_QEMU_PREFIX"
-			import_image="${!arch_prefix_var:-_}/${SOURCE_REPO}:${SOURCE_TAG}"
-			[ -s "$(get_manifest "${import_image}")" ] && source_arches+="${arch} "
-		done
-	else
-		print_param "${SOURCE_MANIFEST}" 'Source manifest'
-		source_arches="$(sed -n -e 'N;s/.*Arch:\s*\(\w*\)\n.*Variant:\s*\(\w*\)/\1\2/p;D;' "${SOURCE_MANIFEST}" \
-			| sed -e 's/[^\w]*386/i386/' | sort -u | xargs)"
-	fi
+  # find available architectures in source repo(s)
+  #
+  # if nothing is cached and SOURCE_ARCH_PREFIX is set, pull manifest from each
+  # of the '<arch>/' repos (e.g. arm32v7/<image>, s390x/<image>, etc..)
+  #
+  # otherwise use the multi-arch manifest we pulled earlier, SOURCE_MANIFEST
+  #
+  unset source_arches
 
-	# default arch if manifest-tool doesn't return anything useful
-	[ -z "${source_arches}" ] && source_arches='amd64'
+  if [ -n "${SOURCE_ARCHES:-}" ]; then
+    source_arches="${SOURCE_ARCHES}"
+  elif [ ! -z "${SOURCE_ARCH_PREFIX+set}" ]; then
+    for arch in ${configured_arches}; do
+      arch_prefix_var="${arch}_QEMU_PREFIX"
+      import_image="${!arch_prefix_var:-_}/${SOURCE_REPO}:${SOURCE_TAG}"
+      [ -s "$(get_manifest "${import_image}")" ] && source_arches+="${arch} "
+    done
+  else
+    print_param "${SOURCE_MANIFEST}" 'Source manifest'
 
-	print_param "${source_arches}" 'Source arches'
+    # this fails if there is no "Variant"
+    # source_arches="$(sed -n -e 'N;s/.*Arch:\s*\(\w*\)\n.*Variant:\s*\(\w*\)/\1\2/p;D;' "${SOURCE_MANIFEST}" \
+    #   | sed -e 's/[^\w]*386/i386/' | sort -u | xargs)"
 
-	# build_arches is the intersection of configtured_arches and source_arches
-	build_arches="$(comm -12 \
-		<(echo "${configured_arches}" | xargs -n1 | LC_ALL=C sort) \
-		<(echo "${source_arches}" | xargs -n1 | LC_ALL=C sort) \
-		| xargs)"
+    arch_count="$(grep -oP '^\[[0-9]*\]' "${SOURCE_MANIFEST}" | tail -1 | grep -o '[0-9]*')"
+
+    [ ! -z "${DEBUG}" ] && >&2 echo 'processing manifest:'
+
+    if [ ! -n "${arch_count}" ]; then
+      source_arches="$(get_arch_from_manifest "${SOURCE_MANIFEST}")"
+    else
+      n=0; until [ "${n}" == "${arch_count}" ]; do
+        n=$((n+1))
+        source_arches+="$(get_arch_from_manifest "${SOURCE_MANIFEST}" "${n}")"
+      done
+      source_arches="$(echo ${source_arches} | xargs -n1 | sed -e 's/[^\w]*386/i386/' | sort -u | xargs)"
+    fi
+  fi
+
+  # default arch if manifest-tool doesn't return anything useful
+  [ -z "${source_arches}" ] && source_arches='amd64'
+
+  print_param "${source_arches}" 'Source arches'
+
+  # build_arches is the intersection of configtured_arches and source_arches
+  build_arches="$(comm -12 \
+    <(echo "${configured_arches}" | xargs -n1 | LC_ALL=C sort) \
+    <(echo "${source_arches}" | xargs -n1 | LC_ALL=C sort) \
+    | xargs)"
 fi
 add_print_param "${build_arches}" 'build_arches' 'Build arches'
 
@@ -130,49 +147,49 @@ add_print_param "${build_arches}" 'build_arches' 'Build arches'
 #
 platforms=''
 for arch in ${build_arches}; do
-	manifest_platform="${arch}_MANIFEST_PLATFORM"
-	[ -n "${!manifest_platform}" ] \
-		&& platform_string="${arch}_MANIFEST_PLATFORM" \
-		|| platform_string="${arch}_PLATFORM"
+  manifest_platform="${arch}_MANIFEST_PLATFORM"
+  [ -n "${!manifest_platform}" ] \
+    && platform_string="${arch}_MANIFEST_PLATFORM" \
+    || platform_string="${arch}_PLATFORM"
   platforms="${platforms},${!platform_string}"
 done
 add_print_param "${platforms:1}" 'platforms' 'Platforms'
 
 [ -z "${platforms}" ] \
-	&& echo "No platforms found. Exiting." \
-	&& exit 1
+  && echo "No platforms found. Exiting." \
+  && exit 1
 
 add_print_param "${SOURCE_IMAGE}" 'SOURCE_IMAGE' 'Source image'
 
-##	read keys from arch.yaml
+##  read keys from arch.yaml
 #
 arch_yaml_keys="$(sed -En 's|^[[:space:]][[:space:]](.*):.*|\1|p' ${ARCH_YAML} | sort -u | xargs)"
 # available_keys="$(comm -12 <(printf '%s\n' ${arch_yaml_keys} \
-	# | LC_ALL=C sort) <(printf '%s\n' ${ARCH_KEYS} | LC_ALL=C sort) | xargs)"
+  # | LC_ALL=C sort) <(printf '%s\n' ${ARCH_KEYS} | LC_ALL=C sort) | xargs)"
 # add_param "${available_keys}" 'available_keys'
 add_param "${arch_yaml_keys}" 'available_keys'
 
 # expect PYTHON_WHEELS to be a list of wheels each set as such:
 #
-#		<module_name>(-<ssl_library)([>|=]=<module_version)
+#    <module_name>(-<ssl_library)([>|=]=<module_version)
 #
 if [ -n "${PYTHON_WHEELS+set}" ]; then
-	wheel_tags=''
-	for wheel in ${PYTHON_WHEELS}; do
-		wheel_version="$(py_required_version "${wheel}")" \
-			|| continue
-		wheel_name="${wheel%%[=<>]*}"
-		wheel_tags="${wheel_name%-}${wheel_version} ${wheel_tags}"
-	done
-	add_print_param "${wheel_tags}" 'WHEEL_TAGS' 'Python wheels'
+  wheel_tags=''
+  for wheel in ${PYTHON_WHEELS}; do
+    wheel_version="$(py_required_version "${wheel}")" \
+      || continue
+    wheel_name="${wheel%%[=<>]*}"
+    wheel_tags="${wheel_name%-}${wheel_version} ${wheel_tags}"
+  done
+  add_print_param "${wheel_tags}" 'WHEEL_TAGS' 'Python wheels'
 fi
 
-##	call any post_checkout_end() from build.conf
+##  call any post_checkout_end() from build.conf
 #
 ifFuncExec post_checkout_end
 
 for param in $(echo "${!CHECKOUT_DISPLAY[@]}" | xargs -n1 | sort); do
-	[ -n "${!param}" ] && print_param "${!param}" "${CHECKOUT_DISPLAY[${param}]}"
+  [ -n "${!param}" ] && print_param "${!param}" "${CHECKOUT_DISPLAY[${param}]}"
 done
 
 echo

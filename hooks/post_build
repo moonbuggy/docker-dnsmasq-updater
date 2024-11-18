@@ -4,6 +4,6 @@
 
 # echo "--- post_build ---"
 
-##	call any post_build() from build.conf
+##  call any post_build() from build.conf
 #
 [ -z "${SKIP_BUILD+set}" ] && ifFuncExec post_build

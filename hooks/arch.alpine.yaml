@@ -5,13 +5,20 @@ amd64:
   QEMU_PREFIX: amd64
   PLATFORM: linux/amd64
 
-arm64v8:
+# this is cannonical for arm64v8
+arm64:
   TARGET_ARCH_TAG: arm64v8
-  EXTRA_ARCH_TAGS: arm64
   QEMU_ARCH: aarch64
   S6_ARCH: aarch64
   QEMU_PREFIX: arm64v8
-  PLATFORM: linux/arm64/v8
+  PLATFORM: linux/arm64
+
+arm64v8:
+  TARGET_ARCH_TAG: arm64v8
+  QEMU_ARCH: aarch64
+  S6_ARCH: aarch64
+  QEMU_PREFIX: arm64v8
+  PLATFORM: linux/arm64
 
 armv6:
   TARGET_ARCH_TAG: armv6

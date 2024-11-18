@@ -4,92 +4,95 @@
 
 # push_platforms <target_tag> <base_tag>
 push_platforms () {
-	[ -n "${RATE_LIMITED+set}" ] && return
+  [ -n "${RATE_LIMITED+set}" ] && return
 
-	[ -n "${platforms:-}" ] || { echo "No platforms to push."; return 0; }
+  [ -n "${platforms:-}" ] || { echo "No platforms to push."; return 0; }
 
-	# remove duplicates
-	clean_platforms=''
-	for platform in $(echo ${platforms} | xargs -d',' -n1); do
-		echo "${clean_platforms}" | xargs -d',' | grep -q "${platform}" \
-			|| clean_platforms+=",${platform}"
-	done
-	platforms="${clean_platforms:1}"
+  # remove duplicates
+  clean_platforms=''
+  for platform in $(echo ${platforms} | xargs -d',' -n1); do
+    echo "${clean_platforms}" | xargs -d',' | grep -q "${platform}" \
+      || clean_platforms+=",${platform}"
+  done
+  platforms="${clean_platforms:1}"
 
-	local base_tag
-	[ -n "${2}" ] && base_tag="${2}" || base_tag="${1}"
+  local base_tag
+  [ -n "${2}" ] && base_tag="${2}" || base_tag="${1}"
 
-	# allow for empty basetag and ARCHVARIANT-only template
-	[ -n "${base_tag}" ] && base_tag="${base_tag}-"
+  # allow for empty basetag and ARCHVARIANT-only template
+  [ -n "${base_tag}" ] && base_tag="${base_tag}-"
 
-	local target_tag
-	[ -n "${1}" ] && target_tag="${1}" || target_tag='latest'
+  local target_tag
+  [ -n "${1}" ] && target_tag="${1}" || target_tag='latest'
 
-	IFS=' ' read -r -a manifest_cmd <<< "$(get_manifest_tool)"
-	manifest_cmd+=(push from-args --platforms "${platforms}" --template "${DOCKER_REPO}:${base_tag}ARCHVARIANT" --target "${DOCKER_REPO}:${target_tag}")
+  IFS=' ' read -r -a manifest_cmd <<< "$(get_manifest_tool)"
+  manifest_cmd+=(push from-args --platforms "${platforms}" --template "${DOCKER_REPO}:${base_tag}ARCHVARIANT" --target "${DOCKER_REPO}:${target_tag}")
 
-	[ ! -z "${DEBUG+set}" ] \
-		&& pretty_manifest_cmd="$(echo "${manifest_cmd[*]}" | sed -r -e "s/(--)/\\\ \n\t\1/g")" \
-		&& echo '--- manifest command ---' && printf '%s\n' "${pretty_manifest_cmd}"
+  [ ! -z "${DEBUG+set}" ] \
+    && pretty_manifest_cmd="$(echo "${manifest_cmd[*]}" | sed -r -e "s/(--)/\\\ \n\t\1/g")" \
+    && echo '--- manifest command ---' && printf '%s\n' "${pretty_manifest_cmd}"
 
-	printf '%-20s ' "${target_tag}"
+  printf '%-20s ' "${target_tag}"
 
-	[ -n "${NOOP+set}" ] && echo '[NOOP]' && return 0
-	[ -n "${NO_PUSH+set}" ] && echo '[NO_PUSH]' && return 0
-#	{ "${manifest_cmd[@]}" | grep -i Digest | cut -d' ' -f2; } || { echo 'Could not push manifest.'; return 1; }
-#	"${manifest_cmd[@]}" || { echo 'Could not push manifest.'; return 1; }
-	local error
-	error="$("${manifest_cmd[@]}" 2>&1)";
+  [ -n "${NOOP+set}" ] && echo '[NOOP]' && return 0
+  [ -n "${NO_PUSH+set}" ] && echo '[NO_PUSH]' && return 0
 
-	if [ -n "${error}" ]; then
-		case ${error} in
-			*toomanyrequests*)
-				printf 'rate limited!\n\nSkipping remaining post_push..\n'
-				RATE_LIMITED='true'
-				POST_PUSH_SKIPPED="${DOCKER_TAG}"
-				return
-				;;
-			*)
-				printf 'unknown error:\n%s\n' "${error}"
-				exit 1
-				;;
-		esac
-		return 1
-	fi
-	echo
+#  { "${manifest_cmd[@]}" | grep -i Digest | cut -d' ' -f2; } || { echo 'Could not push manifest.'; return 1; }
+#  "${manifest_cmd[@]}" || { echo 'Could not push manifest.'; return 1; }
+
+  local error
+  { error="$("${manifest_cmd[@]}" 3>&2 2>&1 1>&3)"; } 2>&1 # | cut -d' ' -f2
+
+  if [ -n "${error}" ]; then
+    case ${error} in
+      *toomanyrequests*)
+        printf 'rate limited!\n\nSkipping remaining post_push..\n'
+        RATE_LIMITED='true'
+        POST_PUSH_SKIPPED="${DOCKER_TAG}"
+        return
+        ;;
+      *)
+        printf 'unknown error:\n%s\n' "${error}"
+        exit 1
+        ;;
+    esac
+    return 1
+  fi
 }
 
 if [ -n "${SINGLE_ARCH_BUILD}" ]; then
-	echo "Single arch build, not pushing manifests."
+  echo "Single arch build, not pushing manifests."
 elif [ ! -z "${SKIP_BUILD+set}" ]; then
-	echo "Skipping."
+  echo "Skipping."
 elif [ -n "${NO_MANIFEST+set}" ]; then
-	echo "NO_MANIFEST is set, skipping post_push."
+  echo "NO_MANIFEST is set, skipping post_push."
 elif [ -n "${NO_POST_PUSH+set}" ]; then
-	echo "NO_POST_PUSH is set, skipping post_push."
+  echo "NO_POST_PUSH is set, skipping post_push."
 elif [ -n "${RATE_LIMITED+set}" ]; then
-	echo "skip in post_push"
-	POST_PUSH_SKIPPED="${POST_PUSH_SKIPPED} ${DOCKER_TAG}"
+  echo "skip in post_push"
+  POST_PUSH_SKIPPED="${POST_PUSH_SKIPPED} ${DOCKER_TAG}"
+elif [ ! -z "${BUILD_MULTIARCH+set}" ]; then
+  echo "BUILD_MULTIARCH is set, skipping post push."
 else
-	manifest_tags=()
+  manifest_tags=()
 
-	ifFunc get_manifest_tags && IFS=' ' read -r -a manifest_tags <<< "$(get_manifest_tags)"
-	manifest_tags+=("${TARGET_TAG}")
+  ifFunc get_manifest_tags && IFS=' ' read -r -a manifest_tags <<< "$(get_manifest_tags)"
+  manifest_tags+=("${TARGET_TAG}")
 
-	[ "${DOCKER_TAG}" = "latest" ] && manifest_tags+=('latest')
+  [ "${DOCKER_TAG}" = "latest" ] && manifest_tags+=('latest')
 
-	IFS=' ' read -r -a manifest_tags <<< "$(echo "${manifest_tags[*]}" | xargs -n1 | sort -u | xargs)"
+  IFS=' ' read -r -a manifest_tags <<< "$(echo "${manifest_tags[*]}" | xargs -n1 | sort -u | xargs)"
 
-	echo "--- post_push (${manifest_tags[*]}) ---"
+  echo "--- post_push (${manifest_tags[*]}) ---"
 
-	if (( ${#manifest_tags[@]} )); then
-		for tag in "${manifest_tags[@]}"; do push_platforms "${tag}" "${TARGET_TAG}";	done
-	else
-#		echo 'No manifest tags to push.'
-		push_platforms
-	fi
+  if (( ${#manifest_tags[@]} )); then
+    for tag in "${manifest_tags[@]}"; do push_platforms "${tag}" "${TARGET_TAG}";  done
+  else
+#    echo 'No manifest tags to push.'
+    push_platforms
+  fi
 fi
 
-##	call any post_push_end() from build.conf
+##  call any post_push_end() from build.conf
 #
 ifFuncExec post_push_end

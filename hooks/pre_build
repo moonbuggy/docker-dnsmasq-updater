@@ -8,14 +8,14 @@ echo "--- pre_build ---"
 touch '_dummyfile'
 
 if [ -z "${NO_QEMU}" ]; then
-	## register qemu-*-static for all supported processors except the current one
-	docker run --rm --privileged multiarch/qemu-user-static:register --reset >/dev/null \
-		&& echo 'Registered QEMU interpreters.'
-	echo
+  ## register qemu-*-static for all supported processors except the current one
+  docker run --rm --privileged multiarch/qemu-user-static:register --reset >/dev/null \
+    && echo 'Registered QEMU interpreters.'
+  echo
 fi
 
 [ -n "${WHEEL_TAGS:-}" ] \
-	&& echo "--- pre_build (python wheels) ---"
+  && echo "--- pre_build (python wheels) ---"
 
 # clean the imports folder for each build, otherwise the cache breaks when we
 # copy a imports folder that has random files depending on what has previously
@@ -23,25 +23,37 @@ fi
 rm -rf "${IMPORTS_DIR}" >/dev/null 2>&1
 
 for arch in ${build_arches}; do
-	this_target_arch_tag="${arch}_TARGET_ARCH_TAG"
+  this_target_arch_tag="${arch}_TARGET_ARCH_TAG"
 
-	mkdir -p "${IMPORTS_DIR}/${!this_target_arch_tag}"
+  mkdir -p "${IMPORTS_DIR}/${!this_target_arch_tag}"
 
-	# if we're not pulling wheels we only need the empty directory tree, to avoid
-	# errors with COPY in Dockerfiles
-	([ ! -n "${WHEEL_TAGS:-}" ] || [ ! -z "${NO_PULL_WHEELS}" ]) && continue
+  # if we're not pulling wheels we only need the empty directory tree, to avoid
+  # errors with COPY in Dockerfiles
+  ([ ! -n "${WHEEL_TAGS:-}" ] || [ ! -z "${NO_PULL_WHEELS}" ]) && continue
 
-	for wheel_tag in ${WHEEL_TAGS}; do
-		# We were using PYTHON_VERSION but this can cause conflicts with container
-		# ENV during the build, so now we're using BUILD_PYTHON_VERSION in build.conf
-		# Let one default to the other here, until all build.conf files are updated
-		import_image="${WHEEL_REPO}:${wheel_tag}-py${BUILD_PYTHON_VERSION:-${PYTHON_VERSION}}-${!this_target_arch_tag}"
-		docker_container_contents "${import_image}" "${IMPORTS_DIR}/${!this_target_arch_tag}/"
-	done
+  this_platform="${arch}_PLATFORM"
+
+  for wheel_tag in ${WHEEL_TAGS}; do
+    # We were using PYTHON_VERSION but this can cause conflicts with container
+    # ENV during the build, so now we're using BUILD_PYTHON_VERSION in build.conf
+    # Let one default to the other here, until all build.conf files are updated
+    BUILD_PYTHON_VERSION="${BUILD_PYTHON_VERSION:-${PYTHON_VERSION}}"
+
+    # try for a multiarch image first
+    import_image="${WHEEL_REPO}:${wheel_tag}-py${BUILD_PYTHON_VERSION}"
+    if ! docker_container_contents "${import_image}" \
+      "${IMPORTS_DIR}/${!this_target_arch_tag}/" "${!this_platform}"; then
+
+      # otherwise try for the older style with the architecture in the image name
+      import_image="${WHEEL_REPO}:${wheel_tag}-py${BUILD_PYTHON_VERSION}-${!this_target_arch_tag}"
+      docker_container_contents "${import_image}" \
+        "${IMPORTS_DIR}/${!this_target_arch_tag}/"
+    fi
+  done
 done
 echo
 
-##	call any pre_build_end() from build.conf
+##  call any pre_build_end() from build.conf
 #
 ifFuncExec pre_build_end
 echo

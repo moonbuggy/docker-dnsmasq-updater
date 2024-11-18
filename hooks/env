@@ -3,14 +3,14 @@
 
 WHEEL_REPO="${WHEEL_REPO:-moonbuggy2000/python-alpine-wheels}"
 # MANIFEST_TOOL_GIT_REPO="estesp/manifest-tool"
-MANIFEST_TOOL_DOCKER_IMAGE="mplatform/manifest-tool"
+MANIFEST_TOOL_DOCKER_IMAGE="mplatform/manifest-tool:alpine-v2.0.6"
 
 DATA_DIR='.build_data'
 QEMU_DIR='.qemu_static'
 IMPORTS_DIR='.imports'
 
 ARCH_YAML='arch.yaml'
-CONFIG_YAML="${CONFIG_YAML_OVERRIDE:-${DATA_DIR}/config.${DOCKER_TAG}${CONFIG_SUFFIX}.yaml}"
+CONFIG_YAML="${DATA_DIR}/${CONFIG_YAML_OVERRIDE:-config.${DOCKER_TAG}${CONFIG_SUFFIX}.yaml}"
 
 # names of debian releases
 debian_names=('null' 'buzz' 'hamm' 'woody' 'etch' 'lenny' 'squeeze' 'wheezy' 'jessie' 'stretch' 'buster' 'bullseye' 'bookworm' 'trixie')
@@ -32,18 +32,20 @@ DOCKER_FILE='Dockerfile'
 ## import config for this repo
 . "build.conf" || { echo 'No build.conf!'; exit 1; }
 
+[ ! -z ${NO_BUILD_MULTIARCH+set} ] && unset BUILD_MULTIARCH
+
 ## handling writing and printing of parameters
-#	del_param       <param>
-#	add_param       <value> <param>
-#	print_param     <value> <desc>
-#	add_print_param <value> <param> <desc>
+#  del_param       <param>
+#  add_param       <value> <param>
+#  print_param     <value> <desc>
+#  add_print_param <value> <param> <desc>
 del_param() { sed "/^${1}:/d" -i "${CONFIG_YAML}"; }
 add_param () {
-	local value
-	value="$(echo "${1}" | xargs)"
-	del_param "${2}"
-	echo "${2}: ${value}" >> "${CONFIG_YAML}"
-	declare -g "${2}=${value}"
+  local value
+  value="$(echo "${1}" | xargs)"
+  del_param "${2}"
+  echo "${2}: ${value}" >> "${CONFIG_YAML}"
+  declare -g "${2}=${value}"
 }
 print_param () { printf '%-40s %-8s\n' "${2}" "${1}"; }
 add_print_param () { add_param "${1}" "${2}"; print_param "${1}" "${3:-${2}}"; }
@@ -56,108 +58,108 @@ add_print_param () { add_param "${1}" "${2}"; print_param "${1}" "${3:-${2}}"; }
 #
 # these have arguments in different positions than the add/print_param functions
 #
-#	eval_param            <param> <command>
-#	eval_print_param      <param> <desc> <command>
-#	eval_param_ifn        <param> <command>
-#	eval_print_param_ifn  <param> <desc> <command>
+#  eval_param            <param> <command>
+#  eval_print_param      <param> <desc> <command>
+#  eval_param_ifn        <param> <command>
+#  eval_print_param_ifn  <param> <desc> <command>
 eval_param () {
-	local param
-	local command
+  local param
+  local command
 
-	param="${1}"
-	IFS=' ' read -a command <<< "${2}"
+  param="${1}"
+  IFS=' ' read -a command <<< "${2}"
 
-	# [ ! -z "${DEBUG+set}" ] \
-	# 	&& >&2 echo "eval_param command: ${command[*]}"
-	add_param "$(eval "${command[*]}")" "${param}"
+  # [ ! -z "${DEBUG+set}" ] \
+  #   && >&2 echo "eval_param command: ${command[*]}"
+  add_param "$(eval "${command[*]}")" "${param}"
 }
 
 eval_print_param () {
-	local desc
-	[ ! -z "${3}" ] && desc="${2}"
-	eval_param "${1}" "${3:-${2}}"
-	print_param "${!1}" "${desc:-${1}}"
+  local desc
+  [ ! -z "${3}" ] && desc="${2}"
+  eval_param "${1}" "${3:-${2}}"
+  print_param "${!1}" "${desc:-${1}}"
 }
 
 eval_param_ifn () {
-	local param
-	local command
-	local value
+  local param
+  local command
+  local value
 
-	param="${1}"
-	IFS=' ' read -a command <<< "${2}"
+  param="${1}"
+  IFS=' ' read -a command <<< "${2}"
 
-	if [ -z "${!param}" ]; then
-		value="$(eval "${command[*]}")"
-	else
-		# [ ! -z "${DEBUG+set}" ] \
-		# 	&& >&2 echo "eval_param_ifn: value exists"
-		value="${!param}"
-	fi
+  if [ -z "${!param}" ]; then
+    value="$(eval "${command[*]}")"
+  else
+    # [ ! -z "${DEBUG+set}" ] \
+    #   && >&2 echo "eval_param_ifn: value exists"
+    value="${!param}"
+  fi
 
-	add_param "${value}" "${param}"
+  add_param "${value}" "${param}"
 }
 
 eval_print_param_ifn () {
-	local desc
-	[ ! -z "${3}" ] && desc="${2}"
-	eval_param_ifn "${1}" "${3:-${2}}"
-	print_param "${!1}" "${desc:-${1}}"
+  local desc
+  [ ! -z "${3}" ] && desc="${2}"
+  eval_param_ifn "${1}" "${3:-${2}}"
+  print_param "${!1}" "${desc:-${1}}"
 }
 
 function cleanup() { tput cnorm; }
 trap cleanup EXIT
 
 spinner() {
-	local pid=$!
-	local delay=0.5
-	local i=0
+  local pid=$!
+  local delay=0.5
+  local i=0
 
-	tput civis
-	while ps -a | awk '{print $1}' | grep -q "${pid}"; do
-	    c=`expr ${i} % 4`
-	    case ${c} in
-	       0) printf '/' ;;
-	       1) printf '-' ;;
-	       2) printf '\\' ;;
-	       3) printf '|' ;;
-	    esac
-	    i=`expr ${i} + 1`
-	    sleep $delay
-	    printf "\b"
-	done
+  tput civis
+  while ps -a | awk '{print $1}' | grep -q "${pid}"; do
+      c=`expr ${i} % 4`
+      case ${c} in
+         0) printf '/' ;;
+         1) printf '-' ;;
+         2) printf '\\' ;;
+         3) printf '|' ;;
+      esac
+      i=`expr ${i} + 1`
+      sleep $delay
+      printf "\b"
+  done
 }
 
 ## curl the provided URL, handle errors and cache
 # get_url <URL>
 get_url () {
-	local page_data
-	local cache_file
+  local page_data
+  local cache_file
 
-	cache_file="${DATA_DIR}/$(echo "${1}" | md5sum | cut -d' ' -f1)"
+  cache_file="${DATA_DIR}/$(echo "${1}" | md5sum | cut -d' ' -f1)"
 
-	if [ -f "${cache_file}" ] && [ "$(( $(date +"%s") - $(date -r "${cache_file}" +"%s") ))" -lt "${CACHE_EXPIRY}" ]; then
-		[ ! -z "${DEBUG}" ] && >&2 echo "Using cache for URL: ${1}"
-		cat "${cache_file}"
-	else
-		>&2 printf 'Getting URL: %s.. ' "${1}"
-		page_data=$(curl -sL -w '%{http_code}\n' "${1}")
-		http_code="${page_data:(-3)}"
+  if [ -f "${cache_file}" ] && [ "$(( $(date +"%s") - $(date -r "${cache_file}" +"%s") ))" -lt "${CACHE_EXPIRY}" ]; then
+    [ ! -z "${DEBUG}" ] && >&2 echo "Using cache for URL: ${1}"
+    cat "${cache_file}"
+  else
+    >&2 printf 'Getting URL: %s.. ' "${1}"
+    page_data=$(curl -sL -w '%{http_code}\n' "${1}")
+    http_code="${page_data:(-3)}"
 
-		if [ "${http_code}" = "200" ]; then
-			echo "${page_data%???}" | tee "${cache_file}"
-		else
-			>&2 echo "URL: ${1}"
-			>&2 echo "cache file: $(echo "${1}" | md5sum | cut -d' ' -f1)"
-			>&2 printf 'HTTP Error: %s\n\n' "${http_code}"
-			return 1
-		fi
-		>&2 printf "\r$(tput el)"
-	fi
+    if [ "${http_code}" = "200" ]; then
+      echo "${page_data%???}" | tee "${cache_file}"
+    else
+      >&2 echo "URL: ${1}"
+      >&2 echo "cache file: $(echo "${1}" | md5sum | cut -d' ' -f1)"
+      >&2 printf 'HTTP Error: %s\n\n' "${http_code}"
+      return 1
+    fi
+    >&2 printf "\r$(tput el)"
+  fi
 }
 
 # git_api_data <repo> <request>
-git_api_data () {	get_url "https://api.github.com/repos/${1}/${2}"; }
+git_api_data () {  get_url "https://api.github.com/repos/${1}/${2}"; }
 
 # git_api_element <repo> <request> <element>
 git_api_element () { git_api_data "${1}" "${2}" | sed -En 's|.*"'"${3}"'"\W+"([^"]+)".*|\1|p'; }
@@ -168,54 +170,77 @@ git_repo_releases () { git_api_element "${1}" 'releases' "${2:-tag_name}" | sort
 # git_latest_release <repo> (<element>)
 git_latest_release () { git_api_element "${1}" 'releases/latest' "${2:-tag_name}"; }
 # git_latest_release <repo>
-# git_latest_release () {	git_repo_releases "${1}" | tail -n1; }
+# git_latest_release () {  git_repo_releases "${1}" | tail -n1; }
 
 # git_repo_tags <repo> (<element>)
 git_repo_tags () { git_api_element "${1}" 'tags' "${2:-name}" | sort -uV; }
 
 # git_latest_tag <repo> (<element>)
-# git_latest_tag () {	git_api_element "${1}" 'tags' "${2:-name}" | sort -uV | tail -n1; }
+# git_latest_tag () {  git_api_element "${1}" 'tags' "${2:-name}" | sort -uV | tail -n1; }
 # git_latest_tag <repo>
-git_latest_tag () {	git_repo_tags "${1}" | tail -n1; }
+git_latest_tag () {  git_repo_tags "${1}" | tail -n1; }
 
 # alpine_package_version <package> <alpine version> <repos>
 #
 # <repos> is a list, defaults to "main community"
 #
 alpine_package_version () {
-	local alpine_version
-	alpine_version="$(echo "${2}" | awk -F \. '{print $1"."$2}')"
-	local repos && repos="${3:-main community}"
+  local alpine_version
+  alpine_version="$(echo "${2}" | awk -F \. '{print $1"."$2}')"
+  local repos && repos="${3:-main community}"
 
-	local package && packages=''
-	for repo in ${repos}; do
-		packages="$(printf '%s\n%s' \
-			"$(get_url "https://dl-cdn.alpinelinux.org/alpine/v${alpine_version}/${repo}/x86_64/" | grep -oP "^<a.*>\K[^<]*apk(?=<)")" \
-			"${packages}")"
-	done
+  local package && packages=''
+  for repo in ${repos}; do
+    packages="$(printf '%s\n%s' \
+      "$(get_url "https://dl-cdn.alpinelinux.org/alpine/v${alpine_version}/${repo}/x86_64/" | grep -oP "^<a.*>\K[^<]*apk(?=<)")" \
+      "${packages}")"
+  done
 
-	# repo_main="$(get_url "https://dl-cdn.alpinelinux.org/alpine/v${alpine_version}/main/x86_64/" | grep -oP "^<a.*>\K[^<]*apk(?=<)")"
-	# repo_community="$(get_url "https://dl-cdn.alpinelinux.org/alpine/v${alpine_version}/community/x86_64/" | grep -oP "^<a.*>\K[^<]*apk(?=<)")"
-	# printf '%s\n%s' "${repo_main}" "${repo_community}" | grep -oP "^${1}-\K[0-9.]*"
+  # repo_main="$(get_url "https://dl-cdn.alpinelinux.org/alpine/v${alpine_version}/main/x86_64/" | grep -oP "^<a.*>\K[^<]*apk(?=<)")"
+  # repo_community="$(get_url "https://dl-cdn.alpinelinux.org/alpine/v${alpine_version}/community/x86_64/" | grep -oP "^<a.*>\K[^<]*apk(?=<)")"
+  # printf '%s\n%s' "${repo_main}" "${repo_community}" | grep -oP "^${1}-\K[0-9.]*"
 
-	echo "${packages}" | grep -oP "^${1}-\K[0-9.]*"
+  echo "${packages}" | grep -oP "^${1}-\K[0-9.]*"
+}
+
+# debian_package_api <api path>
+#
+debian_package_api () {
+  [ -z "${1}" ] && return
+  get_url "https://sources.debian.org/api/${1}"
+}
+
+# debian_package_release <package> <version>
+#
+# get the debian release that matches the specified package version
+#
+debian_package_release () {
+  local package && package="${1}"
+  local package_version && package_version="${2}"
+
+  [ ! -n "${package}" ] && [ ! -n "${package_version}" ] && return
+
+  debian_package_api "src/${package}/" | grep -oP "\"suites\"\:\s?\[\s?\"\K(\w*)(?=\"[^\{]*${package_version})"
 }
 
 # debian_package_version <package> <debian release>
 #
 debian_package_version () {
-	local package && package="${1}"
-	local debian_release && debian_release="${2}"
+  local package && package="${1}"
+  local debian_release && debian_release="${2}"
 
-	if [ -z "${package}" ] || [ -z "${debian_release}" ]; then
-		return
-	fi
+  [ ! -n "${package}" ] && [ ! -n "${debian_release}" ] && return
 
-	# either of these works
-	package_version="$(get_url "https://sources.debian.org/api/src/${package}/" | grep -oP "\"suites\"[^}]*${debian_release}\"[^}]*version\D*\K[0-9\.\-]*")"
-	# package_version="$(get_url "https://sources.debian.org/api/src/${package}/${debian_release}/" | grep -oP 'version"\:"\K([^\"]*)' | cut -d'+' -f1)"
+  # either of these works
+  debian_package_api "src/${package}/" | grep -oP "\"suites\"[^}]*${debian_release}\"[^}]*version\D*\K[0-9\.\-]*"
+  # dabian_package_api "src/${package}/${debian_release}" | grep -oP 'version"\:"\K([^\"]*)' | cut -d'+' -f1
+}
 
-	echo "${package_version}"
+debian_version_from_release () {
+  for key in "${!debian_names[@]}"; do
+    [[ "${debian_names[$key]}" == "${1}" ]] \
+      && echo "${key}" && break
+  done
 }
 
 # pypi_api_XXXX <project>
@@ -228,10 +253,10 @@ py_musl_wheel_versions () { docker_api_repo_tags "${WHEEL_REPO}" | grep -oP "${1
 py_musl_wheel_latest () { py_musl_wheel_versions "${1}" | tail -n1; }
 
 # return the 'X' for any 'X.Y.Z' versions provided as arguments
-parse_version_major () { echo "${1}" | xargs -n1 | grep -oP '(^\d*)' | sort -uV ; }
+parse_version_major () { echo "${@}" | xargs -n1 | grep -oP '(^\d*)' | sort -uV ; }
 
 # return the 'X.Y' for any 'X.Y.Z' versions provided as arguments
-parse_version_minor () { echo "${1}" | xargs -n1 | grep -oP '(^\d*\.\d*)' | sort -uV; }
+parse_version_minor () { echo "${@}" | xargs -n1 | grep -oP '(^\d*\.\d*)' | sort -uV; }
 
 #
 # py_required_vesion() and python_get_module_from_string() needs a refactor,
@@ -248,51 +273,51 @@ parse_version_minor () { echo "${1}" | xargs -n1 | grep -oP '(^\d*\.\d*)' | sort
 # py_required_version <module>(-<ssl_library>)([>|=]=<version>) <requirements file or list>
 #
 py_required_version () {
-	local modtag
-	local modname
-	local modstring
-	local modsign
-	local modver
-	local requirements
+  local modtag
+  local modname
+  local modstring
+  local modsign
+  local modver
+  local requirements
 
-	modtag="${1}"
+  modtag="${1}"
 
-	# if there's an '=' in the first argument we won't check for a requirements.txt
-	# file, letting a '>=', '<=' or '==' in the argument take precedence
-	if [ "x${modtag//=/}" != "x${modtag}" ]; then
-		requirements="${modtag}"
-		modtag="${modtag/%[=<>]*/}"
-	else
-		case "${2}" in
-			'') requirements="$(cat requirements.txt 2>/dev/null)" ;;
-			*requirements.txt) requirements="$(cat "${2}" 2>/dev/null)" ;;
-			*) requirements="${2}" ;;
-		esac
-	fi
+  # if there's an '=' in the first argument we won't check for a requirements.txt
+  # file, letting a '>=', '<=' or '==' in the argument take precedence
+  if [ "x${modtag//=/}" != "x${modtag}" ]; then
+    requirements="${modtag}"
+    modtag="${modtag/%[=<>]*/}"
+  else
+    case "${2}" in
+      '') requirements="$(cat requirements.txt 2>/dev/null)" ;;
+      *requirements.txt) requirements="$(cat "${2}" 2>/dev/null)" ;;
+      *) requirements="${2}" ;;
+    esac
+  fi
 
-	case "${modtag##*-}" in
-		openssl|libressl) modname="${modtag%-*}" ;;
-		*) modname="${modtag}" ;;
-	esac
+  case "${modtag##*-}" in
+    openssl|libressl) modname="${modtag%-*}" ;;
+    *) modname="${modtag}" ;;
+  esac
 
-	[ -n "${requirements}" ] \
-		&& modstring="$(echo "${requirements}" | xargs -n1 | grep -P "^${modname}\W")" \
-		&& modsign="$(echo "${modstring}" | grep -oP "([<>=])(?==)")"
+  [ -n "${requirements}" ] \
+    && modstring="$(echo "${requirements}" | xargs -n1 | grep -P "^${modname}\W")" \
+    && modsign="$(echo "${modstring}" | grep -oP "([<>=])(?==)")"
 
-	[ -n "${modsign}" ] && [ "x${modsign}" = "x>" ] \
-		&& modver="$(py_musl_wheel_latest "${modtag}")" \
-		|| modver="$(echo "${modstring}" | grep -oP '(?<=\W{2})[0-9.]*')"
+  [ -n "${modsign}" ] && [ "x${modsign}" = "x>" ] \
+    && modver="$(py_musl_wheel_latest "${modtag}")" \
+    || modver="$(echo "${modstring}" | grep -oP '(?<=\W{2})[0-9.]*')"
 
-	# if we haven't found a version specified by this point default to the latest
-	[ -z "${modver}" ] \
-		&& modver="$(py_musl_wheel_latest "${modtag}")"
+  # if we haven't found a version specified by this point default to the latest
+  [ -z "${modver}" ] \
+    && modver="$(py_musl_wheel_latest "${modtag}")"
 
-	[ -z "${modver}" ] \
-		&& >&2 echo "No version found for: ${1}" \
-		&& >&2 echo "Does the module exist in the repo?" \
-		&& return 1
+  [ -z "${modver}" ] \
+    && >&2 echo "No version found for: ${1}" \
+    && >&2 echo "Does the module exist in the repo?" \
+    && return 1
 
-	echo "${modver}"
+  echo "${modver}"
 }
 
 # take a string that includes some or all elements of the wheel image tag pattern
@@ -302,80 +327,80 @@ py_required_version () {
 # returns: <module><mod_version>
 #
 python_get_module_from_string () {
-	local mod_namever
-	local mod_longname
-	local mod_name
-	local mod_ver
-	local mod_pyver
+  local mod_namever
+  local mod_longname
+  local mod_name
+  local mod_ver
+  local mod_pyver
 
-	# some python modules have a hyphen in the name so we can't simply split the
-	# string at hyphens, need to iterate and parse each fragment
-	IFS='-' read -r -a input_array <<< "${1}"
+  # some python modules have a hyphen in the name so we can't simply split the
+  # string at hyphens, need to iterate and parse each fragment
+  IFS='-' read -r -a input_array <<< "${1}"
 
-	mod_namever=''
+  mod_namever=''
 
-	for value in "${input_array[@]}"; do
-		case "${value}" in
-			py[0-9]*)
-				mod_pyver="${value/py/}"
-				break
-				;;
-			amd64|arm64v8|armv6|armv7|386|ppc64le|s390x)
-				break
-				;;
-			*)
-				mod_namever="${mod_namever}-${value}"
-				;;
-		esac
-	done
+  for value in "${input_array[@]}"; do
+    case "${value}" in
+      py[0-9]*)
+        mod_pyver="${value/py/}"
+        break
+        ;;
+      amd64|arm64v8|armv6|armv7|386|ppc64le|s390x)
+        break
+        ;;
+      *)
+        mod_namever="${mod_namever}-${value}"
+        ;;
+    esac
+  done
 
-	# strip leading hyphen
-	mod_namever="${mod_namever:1}"
+  # strip leading hyphen
+  mod_namever="${mod_namever:1}"
 
-	# strip trailing version number, don't strip integers that are part of the name
-	mod_longname="$(echo ${mod_namever} | sed -E 's|([0-9.]*)$||')"
+  # strip trailing version number, don't strip integers that are part of the name
+  mod_longname="$(echo ${mod_namever} | sed -E 's|([0-9.]*)$||')"
 
-	case "${mod_longname##*-}" in
-		libressl|openssl)
-			mod_name="${mod_longname%-*}"
-			;;
-		*)
-			mod_name="${mod_longname}"
-			;;
-	esac
+  case "${mod_longname##*-}" in
+    libressl|openssl)
+      mod_name="${mod_longname%-*}"
+      ;;
+    *)
+      mod_name="${mod_longname}"
+      ;;
+  esac
 
-	# don't catch integers that may be part of the module name
-	mod_ver="$(echo ${mod_namever} | grep -oP '([0-9.]*)$')"
+  # don't catch integers that may be part of the module name
+  mod_ver="$(echo ${mod_namever} | grep -oP '([0-9.]*)$')"
 
-	# by default, if no version is supplied, get the latest version from WHEEL_REPO
-	# if it exists in that repo and use PyPi if it doesn't
-	# set NO_WHEEL_REPO to use only PyPi
-	[ -z "${NO_WHEEL_REPO}" ] && [ -z "${mod_ver}" ] \
-		&& mod_ver="$(docker_api_repo_tags "${WHEEL_REPO}" | \
-			grep -oP "(?<=${mod_longname})[0-9.]+(?=-py${mod_pyver})" | sort -uV | tail -n1)"
-	[ -z "${mod_ver}" ] \
-		&& mod_ver="$(pypi_api_latest_version "${mod_name}")"
+  # by default, if no version is supplied, get the latest version from WHEEL_REPO
+  # if it exists in that repo and use PyPi if it doesn't
+  # set NO_WHEEL_REPO to use only PyPi
+  [ -z "${NO_WHEEL_REPO}" ] && [ -z "${mod_ver}" ] \
+    && mod_ver="$(docker_api_repo_tags "${WHEEL_REPO}" | \
+      grep -oP "(?<=${mod_longname})[0-9.]+(?=-py${mod_pyver})" | sort -uV | tail -n1)"
+  [ -z "${mod_ver}" ] \
+    && mod_ver="$(pypi_api_latest_version "${mod_name}")"
 
-	# >&2 print_param "${mod_namever}" 'mod namever'
-	# >&2 print_param "${mod_longname}" 'mod longname'
-	# >&2 print_param "${mod_name}" 'mod name'
-	# >&2 print_param "${mod_ver}" 'mod ver'
-	# >&2 print_param "${mod_pyver}" 'mod pyver'
+  # >&2 print_param "${mod_namever}" 'mod namever'
+  # >&2 print_param "${mod_longname}" 'mod longname'
+  # >&2 print_param "${mod_name}" 'mod name'
+  # >&2 print_param "${mod_ver}" 'mod ver'
+  # >&2 print_param "${mod_pyver}" 'mod pyver'
 
-	echo "${mod_longname}${mod_ver}"
+  echo "${mod_longname}${mod_ver}"
 }
 
 docker_api_get_repo () {
-	local repo && repo="${1}"
-	[[ "${repo}" != *"/"* ]] && repo="library/${repo}"
+  local repo && repo="${1}"
+  [[ "${repo}" != *"/"* ]] && repo="library/${repo}"
 
-	URL="https://registry.hub.docker.com/v2/repositories/${repo}/tags?page_size=1000"
-	while [ -n "${URL}" ]; do
-#		>&2 echo "Getting: ${URL}"
-		page="$(get_url "${URL}")"
-		URL="$(echo -e "${page}" | grep -oP '(?<=next":")[^"]*(?=")')"
-		echo -e "${page}" | sed 's/,/,\n/g'
-	done
+  URL="https://registry.hub.docker.com/v2/repositories/${repo}/tags?page_size=100"
+  while [ -n "${URL}" ]; do
+#    >&2 echo "Getting: ${URL}"
+    page="$(get_url "${URL}")"
+    URL="$(echo -e "${page}" | grep -oP '(?<=next":")[^"]*(?=")')"
+    echo -e "${page}" | sed 's/,/,\n/g'
+  done
 }
 
 # docker_api_repo_tags <repo>
@@ -385,65 +410,89 @@ docker_api_repo_tags () { docker_api_get_repo "${1}" | sed -En 's|.*"name"\W+"([
 docker_api_latest () { docker_api_repo_tags "${1}" | grep '\.' | cut -d'-' -f1 | sort -uV | tail -n1; }
 
 # search_repo_tags <pattern> (<tags>)
-#	useful to get latest versions from partial version strings
+#  useful to get latest versions from partial version strings
 #
 # e.g. to get a full X.Y.Z version number:
-#	SOURCE_MAJOR=3; SOURCE_MAJOR_LATEST="$(search_repo_tags "${SOURCE_MAJOR}" "${REPO_TAGS}")"
-#	SOURCE_MINOR=3.5; SOURCE_MINOR_LATEST="$(search_repo_tags "${SOURCE_MINOR}" "${REPO_TAGS}")"
+#  SOURCE_MAJOR=3; SOURCE_MAJOR_LATEST="$(search_repo_tags "${SOURCE_MAJOR}" "${REPO_TAGS}")"
+#  SOURCE_MINOR=3.5; SOURCE_MINOR_LATEST="$(search_repo_tags "${SOURCE_MINOR}" "${REPO_TAGS}")"
 search_repo_tags () {
-	local pattern && pattern="${1}"
-	shift
-	local repo_tags && repo_tags="${*:-${SOURCE_REPO_TAGS}}"
-	echo "${repo_tags}" | xargs -n1 | sed -En 's/^('"${pattern}"'[0-9.]*).*/\1/p' | sort -uV | tail -n1
+  local pattern && pattern="${1}"
+  shift
+  local repo_tags && repo_tags="${*:-${SOURCE_REPO_TAGS}}"
+  echo "${repo_tags}" | xargs -n1 | sed -En 's/^('"${pattern}"'[0-9.]*).*/\1/p' | sort -uV | tail -n1
 }
 
-# docker_container_contents <repo:tag> <outpud folder> <tar args>
+docker_image_pull () {
+  [ -z "${1}" ] && return 1
+
+  # always pull if forced
+  [ ! -z "${WHEELS_FORCE_PULL+set}" ] \
+    && docker pull "${1}" 2>/dev/null | grep Status \
+    && return
+
+  # try for a local image first
+  docker inspect "${import_image}" >/dev/null 2>&1 \
+    && echo "Status: Using existing local image." \
+    && return
+
+  # return an error if we have a cached failure
+  [ x"${IMAGES_NOT_FOUND#*"${import_image}"}" != x"${IMAGES_NOT_FOUND}" ] \
+    && echo "Status: Image not found (cached)." \
+    && add_param "${IMAGES_NOT_FOUND} ${import_image}" 'IMAGES_NOT_FOUND' \
+    && return 1
+
+  # pull the image
+  if ! docker pull "${import_image}" 2>/dev/null | grep Status; then
+    echo "Status: Image not found."
+    add_param "${IMAGES_NOT_FOUND} ${import_image}" 'IMAGES_NOT_FOUND'
+    return 1
+  fi
+}
+
+# docker_container_contents <repo:tag> <outpud folder> <platform>
 docker_container_contents () {
-	[ -z "${1}" ] && return
+  [ -z "${1}" ] && return
 
-	local import_image && import_image="${1}"
-	local output_dir &&	output_dir="${2:-./}"
-	local tar_args && tar_args="${3}"
+  local import_image && import_image="${1}"
+  local output_dir && output_dir="${2:-./}"
+  local platform && platform="${3:-linux/amd64}"
 
-	echo "Importing files from ${import_image} to ${output_dir}"
+  echo "Importing files from ${import_image} to ${output_dir}"
 
-	[ -n "${NOOP+set}" ] && [ -z "${WHEELS_FORCE_PULL+set}" ] && echo 'Status: [NOOP]' && return
+  [ -n "${NOOP+set}" ] && [ -z "${WHEELS_FORCE_PULL+set}" ] \
+    && echo 'Status: [NOOP]' && return
 
-	if [ -z "${WHEELS_FORCE_PULL+set}" ] && docker inspect "${import_image}" >/dev/null 2>&1; then
-		echo "Status: Using existing local image."
-	elif ! docker pull "${import_image}" 2>/dev/null | grep Status; then
-		echo "Status: Image not found."
-		return
-	fi
+  docker_image_pull "${import_image}" || return 1
 
-	# this maybe stopped working in a Docker version released 2023/2024
-	# docker save "${import_image}" | tar --wildcards -xf - -O -- */layer.tar | tar "${tar_args}" -ixf - -C "${output_dir}"
+  # this maybe stopped working in a Docker version released 2023/2024
+  # docker save "${import_image}" | tar --wildcards -xf - -O -- */layer.tar | tar "${tar_args}" -ixf - -C "${output_dir}"
 
-	# this is slower but will work instead
-	echo "FROM ${import_image}" >_tempDockerfile
-	docker build -q -o _tempContents -f _tempDockerfile . >/dev/null
-	cp _tempContents/* "${output_dir}"
-	rm -rf _tempContents _tempDockerfile >/dev/null 2>&1
+  # this is slower but will work instead
+  echo "FROM --platform=${platform} ${import_image}" >_tempDockerfile
+  docker build -q -o _tempContents -f _tempDockerfile . >/dev/null 2>&1 \
+    && cp _tempContents/* "${output_dir}" \
+    || echo "ERROR: Cannot get image contents."
+  rm -rf _tempContents _tempDockerfile >/dev/null 2>&1
 }
 
 ## parse YAML configuration
 #
 parse_yaml () {
-	local prefix && prefix="${2}"
-	local s && s='[[:space:]]*' w='[a-zA-Z0-9_]*'
-	local fs && fs=$(echo @|tr @ '\034')
-	sed -ne "s|^\($s\):|\1|" \
-		-e "s|^\(${s}\)\(${w}\)${s}:${s}[\"']\(.*\)[\"']${s}\$|\1${fs}\2${fs}\3|p" \
-		-e "s|^\(${s}\)\(${w}\)${s}:${s}\(.*\)${s}\$|\1${fs}\2${fs}\3|p" "${1}" |
-		awk -F"${fs}" '{
-			indent = length($1)/2;
-			vname[indent] = $2;
-			for (i in vname) {if (i > indent) {delete vname[i]}}
-			if (length($3) > 0) {
-				vn=""; for (i=0; i<indent; i++) {vn=(vn)(vname[i])("_")}
-				printf("%s%s%s=%s\n", "'"$prefix"'",vn, $2, $3);
-			}
-		}'
+  local prefix && prefix="${2}"
+  local s && s='[[:space:]]*' w='[a-zA-Z0-9_]*'
+  local fs && fs=$(echo @|tr @ '\034')
+  sed -ne "s|^\($s\):|\1|" \
+    -e "s|^\(${s}\)\(${w}\)${s}:${s}[\"']\(.*\)[\"']${s}\$|\1${fs}\2${fs}\3|p" \
+    -e "s|^\(${s}\)\(${w}\)${s}:${s}\(.*\)${s}\$|\1${fs}\2${fs}\3|p" "${1}" |
+    awk -F"${fs}" '{
+      indent = length($1)/2;
+      vname[indent] = $2;
+      for (i in vname) {if (i > indent) {delete vname[i]}}
+      if (length($3) > 0) {
+        vn=""; for (i=0; i<indent; i++) {vn=(vn)(vname[i])("_")}
+        printf("%s%s%s=%s\n", "'"$prefix"'",vn, $2, $3);
+      }
+    }'
 }
 
 ## get/set keys for a specific architecture
@@ -451,17 +500,17 @@ parse_yaml () {
 # get_arch_keys [<available_keys>]
 #
 get_arch_keys () {
-	local keys
+  local keys
 
-	[ $# -eq 0 ] \
-		&& keys="${available_keys:-}" \
-		|| keys="${1}"
+  [ $# -eq 0 ] \
+    && keys="${available_keys:-}" \
+    || keys="${1}"
 
-	for key in ${keys}; do
-		# shellcheck disable=SC2154
-		var="${arch}_${key}"
-		declare -g "${key}=${!var}"
-	done
+  for key in ${keys}; do
+    # shellcheck disable=SC2154
+    var="${arch}_${key}"
+    declare -g "${key}=${!var}"
+  done
 }
 
 ## get the arch of the build host running this script
@@ -469,35 +518,36 @@ get_arch_keys () {
 # currently only used to grab the correct file in get_manifest_tool()
 #
 get_this_arch() {
-	case "$(uname -m)" in
-		x86_64|amd64) echo 'amd64' ;;
-		*86*) echo '386' ;;
-		armv5*) echo 'armv5' ;;
-		armv6*) echo 'armv6' ;;
-		armv7*) echo 'armv7' ;;
-		arm64|aarch64) echo 'arm64' ;;
-		mips) echo 'mips64le' ;;
-		powerpc|ppc64*) echo 'ppc64le' ;;
-		s390x*) echo 's390x' ;;
-	esac
+  case "$(uname -m)" in
+    x86_64|amd64) echo 'amd64' ;;
+    *86*) echo '386' ;;
+    armv5*) echo 'armv5' ;;
+    armv6*) echo 'armv6' ;;
+    armv7*) echo 'armv7' ;;
+    arm64|aarch64) echo 'arm64' ;;
+    mips) echo 'mips64le' ;;
+    powerpc|ppc64*) echo 'ppc64le' ;;
+    risc*) echo 'riscv64' ;;
+    s390x*) echo 's390x' ;;
+  esac
 }
 
 ## get manifest-tool
 #
 get_manifest_tool () {
-	local existing_tool && existing_tool="$(command -v manifest-tool)"
-	if [ -n "${existing_tool}" ]; then
-		echo "${existing_tool}"
-	else
-		# the binaries are no longer available indivudally, only as an archive
-		# it's easier to use the Docker image than bother untaring and copying files
-		echo "docker run --rm ${MANIFEST_TOOL_DOCKER_IMAGE}"
-	fi
+  local existing_tool && existing_tool="$(command -v manifest-tool)"
+  if [ -n "${existing_tool}" ]; then
+    echo "${existing_tool}"
+  else
+    # the binaries are no longer available indivudally, only as an archive
+    # it's easier to use the Docker image than bother untaring and copying files
+    echo "docker run --rm ${MANIFEST_TOOL_DOCKER_IMAGE}"
+  fi
 }
 
 ## delete a file silently
 delete_file() {
-	rm -rf "$@" >/dev/null 2>&1
+  rm -rf "$@" >/dev/null 2>&1
 }
 
 ## get an image manifest
@@ -507,60 +557,74 @@ delete_file() {
 # returns the filename for the cached manifest
 #
 get_manifest() {
-	local source_image && source_image="${1}"
-	local source_repo && source_repo="${source_image%:*}"
+  local source_image && source_image="${1}"
+  local source_repo && source_repo="${source_image%:*}"
 
-	manifest_file="${DATA_DIR}/manifest.${source_repo//\//_}.${source_image##*:}"
+  manifest_file="${DATA_DIR}/manifest.${source_repo//\//_}.${source_image##*:}"
 
-	>&2 tput civis
+  >&2 tput civis
 
-	if [ ! -f "${manifest_file}" ] || [ "$(( $(date +"%s") - $(date -r "${manifest_file}" +"%s") ))" -gt "${CACHE_EXPIRY}" ]; then
-		>&2 printf 'Fetching manifest: %s..           \b\b\b\b\b\b\b\b\b\b' "${source_image}"
+  if [ ! -f "${manifest_file}" ] || [ "$(( $(date +"%s") - $(date -r "${manifest_file}" +"%s") ))" -gt "${CACHE_EXPIRY}" ]; then
+    >&2 printf 'Fetching manifest: %s..           \b\b\b\b\b\b\b\b\b\b' "${source_image}"
 
-		IFS=' ' read -a manifest_cmd <<< "$(get_manifest_tool)"
-		manifest_cmd+=('inspect' "${source_image}")
-		# pretty_manifest_cmd="$(echo "${manifest_cmd[*]}" | sed -r -e "s/(--)/\\\ \n\t\1/g")"
-		# >&2 printf '\n--- manifest command ---\n%s\n' "${pretty_manifest_cmd}"
+    IFS=' ' read -a manifest_cmd <<< "$(get_manifest_tool)"
+    manifest_cmd+=('inspect' "${source_image}")
+    # pretty_manifest_cmd="$(echo "${manifest_cmd[*]}" | sed -r -e "s/(--)/\\\ \n\t\1/g")"
+    # >&2 printf '\n--- manifest command ---\n%s\n' "${pretty_manifest_cmd}"
 
-		# the spinner used in this way prevents 'error' being set
-		local error
-		error="$("${manifest_cmd[@]}" 2>&1 1>"${manifest_file}")" #&
-		# >&2 spinner
+    # the spinner used in this way prevents 'error' being set
+    local error
+    error="$("${manifest_cmd[@]}" 2>&1 1>"${manifest_file}")" #&
+    # >&2 spinner
 
-		# if there's an error try and determine the cause so we can decide whether to
-		# cache the failure by keeping the empty manifest file:
-		#		cache the failure if it's indicative of the image/tag not existing
-		#		don't cache transient failures
-		#
-		if [ -n "${error}" ]; then
-			local error_message
-			error_message="$(echo "${error}" | grep -oP '.*msg\=\"\K[^\"]*' | head -n1)"
+    # if there's an error try and determine the cause so we can decide whether to
+    # cache the failure by keeping the empty manifest file:
+    #    cache the failure if it's indicative of the image/tag not existing
+    #    don't cache transient failures
+    #
+    if [ -n "${error}" ]; then
+      local error_message
+      error_message="$(echo "${error}" | grep -oP '.*msg\=\"\K[^\"]*' | head -n1)"
 
-			case ${error_message} in
-				*"not found") >&2 echo 'tag not found' ;;
-				"pull access denied"*) >&2 echo 'image not found or no auth' ;;
-				*toomanyrequests*)
-					>&2 echo 'rate limited'
-					delete_file "${manifest_file}"
-					exit 1
-					;;
-				*)
-					>&2 printf 'unknown error:\n%s\n' "${error}"
-					delete_file "${manifest_file}"
-					exit 1
-					;;
-			esac
-			return 1
-		fi
+      case ${error_message} in
+        *"not found") >&2 echo 'tag not found' ;;
+        "pull access denied"*) >&2 echo 'image not found or no auth' ;;
+        *toomanyrequests*)
+          >&2 echo 'rate limited'
+          delete_file "${manifest_file}"
+          exit 1
+          ;;
+        *)
+          >&2 printf 'unknown error:\n%s\n' "${error}"
+          delete_file "${manifest_file}"
+          exit 1
+          ;;
+      esac
+      return 1
+    fi
 
-		>&2 printf '\r'
-	# else
-	# 	>&2 printf 'Using cached manifest: %s\n' "${manifest_file}"
-	fi
-	>&2 tput cnorm
-	echo "${manifest_file}"
+    >&2 printf '\r'
+  # else
+  #   >&2 printf 'Using cached manifest: %s\n' "${manifest_file}"
+  fi
+  >&2 tput cnorm
+  echo "${manifest_file}"
 }
 
+## get the arch+varient from a manifest file
+#
+# get_manifest_tool <manifest file> (<arch count>)
+#
+get_arch_from_manifest () {
+  [ x"${2}" == x"" ] \
+    && unset count_string \
+    || count_string="\[${2}\]"
+
+  arch_string="$(sed -n -e 's|'${count_string}'.*Arch:\s*\(\w*\)|\1|p' "${1}")"
+  arch_string+="$(sed -n -e 's|'${count_string}'.*Variant:\s*\(\w*\)|\1|p' "${1}") "
+  [ ! -z "${DEBUG}" ] && >&2 printf "\t${2} ${arch_string}\n"
+  echo "${arch_string}"
+}
 
 # ifFunc <func>
 ifFunc () { type "${1}" 2> /dev/null | sed "s/${1}//" | grep -qwi function; }
@@ -570,14 +634,14 @@ ifFuncExec () { if ifFunc "${1}"; then "${@}"; fi; }
 
 # ifFuncSetVar <var> <func> <args>
 ifFuncSetVar () {
-	var="${1}" &&	shift
-	value=$(ifFuncExec "${@}")
-	if [ -n "${value}" ]; then declare -g "${var}=${value}"; fi
+  var="${1}" &&  shift
+  value=$(ifFuncExec "${@}")
+  if [ -n "${value}" ]; then declare -g "${var}=${value}"; fi
 }
 
 ## read any valid existing config
 [ -f "${CONFIG_YAML}" ] \
-	&& [ "$(( $(date +"%s") - $(date -r "${CONFIG_YAML}" +"%s") ))" -lt "${CACHE_EXPIRY}" ] \
-	&& while read -r line; do declare "${line}"; done < <(parse_yaml "${CONFIG_YAML}")
+  && [ "$(( $(date +"%s") - $(date -r "${CONFIG_YAML}" +"%s") ))" -lt "${CACHE_EXPIRY}" ] \
+  && while read -r line; do declare "${line}"; done < <(parse_yaml "${CONFIG_YAML}")
 
 ifFuncExec env_end

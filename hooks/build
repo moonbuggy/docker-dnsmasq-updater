@@ -6,112 +6,139 @@ echo "--- build ---"
 
 set -e
 
+# feed one string to the loop if we're building all in one, since we don't
+# need to loop
+[ ! -z "${BUILD_MULTIARCH+set}" ] \
+  && build_arches='multi' \
+  && TAG_OVERRIDE="${TARGET_TAG}"
+
 ## loop through valid arches
 #
 for arch in ${build_arches:-}; do
-	echo "--- build (${arch}) ---"
+  echo "--- build (${arch}) ---"
 
-	# get arch config
-	for key in ${available_keys:-}; do
-		var="${arch}_${key}"
-		declare "${key}=${!var}"
-	done
+  # get arch config
+  for key in ${available_keys:-}; do
+    var="${arch}_${key}"
+    declare "${key}=${!var}"
+  done
 
-	if [ -z "${SOURCE_IMAGE}" ]; then
-		true
-	elif [ -n "${SOURCE_ARCH_PREFIX}" ]; then
-		FROM_IMAGE="${QEMU_PREFIX}/${SOURCE_IMAGE}"
-	elif ifFunc get_from_image; then
-		FROM_IMAGE="$(get_from_image)"
-	elif [ -n "${SOURCE_ARCH_TAG}" ]; then
-		FROM_IMAGE="${SOURCE_IMAGE}-${SOURCE_ARCH_TAG}"
-	else
-		FROM_IMAGE="${SOURCE_IMAGE}"
-	fi
+  if [ -z "${SOURCE_IMAGE}" ]; then
+    true
+  elif [ -n "${SOURCE_ARCH_PREFIX}" ]; then
+    FROM_IMAGE="${QEMU_PREFIX}/${SOURCE_IMAGE}"
+  elif ifFunc get_from_image; then
+    FROM_IMAGE="$(get_from_image)"
+  elif [ -n "${SOURCE_ARCH_TAG}" ]; then
+    FROM_IMAGE="${SOURCE_IMAGE}-${SOURCE_ARCH_TAG}"
+  else
+    FROM_IMAGE="${SOURCE_IMAGE}"
+  fi
 
-	print_param "${TARGET_TAG}" 'Target tag'
+  print_param "${TARGET_TAG}" 'Target tag'
 
-	[ ! -z "${PLATFORM_OVERRIDE+set}" ] && PLATFORM="${PLATFORM_OVERRIDE}"
-	print_param "${PLATFORM}" 'Platform'
+  [ ! -z "${PLATFORM_OVERRIDE+set}" ] && PLATFORM="${PLATFORM_OVERRIDE}"
+  print_param "${PLATFORM}" 'Platform'
 
-	# determine the Dockerfile to use
-	[ -n "${DOCKERFILE_OVERRIDE+set}" ] && \
-		DOCKER_FILE="${DOCKERFILE_OVERRIDE}"
-	[ -n "${QEMU_ARCH}" ] && [ -f "${DOCKER_FILE}.qemu" ] && \
-		DOCKER_FILE="${DOCKER_FILE}.qemu"
-	print_param "${DOCKER_FILE}" 'Dockerfile'
+  # determine the Dockerfile to use
+  [ -n "${DOCKERFILE_OVERRIDE+set}" ] && \
+    DOCKER_FILE="${DOCKERFILE_OVERRIDE}"
+  [ -n "${QEMU_ARCH}" ] && [ -f "${DOCKER_FILE}.qemu" ] && \
+    DOCKER_FILE="${DOCKER_FILE}.qemu"
+  print_param "${DOCKER_FILE}" 'Dockerfile'
 
-	## prepare build arguments
-	#
-	# make sure BUILD_ARGS array exists
-	declare -p BUILD_ARGS >/dev/null 2>&1 || declare -A BUILD_ARGS
+  ## prepare build arguments
+  #
+  # make sure BUILD_ARGS array exists
+  declare -p BUILD_ARGS >/dev/null 2>&1 || declare -A BUILD_ARGS
 
-	# if available add FROM image
-	[ -n "${FROM_IMAGE}" ] && BUILD_ARGS+=([FROM_IMAGE]='From')
+  # if available add FROM image
+  [ -n "${FROM_IMAGE}" ] && BUILD_ARGS+=([FROM_IMAGE]='From')
 
-	# if necessary add QEMU arguments
-	[ -n "${QEMU_ARCH}" ] && BUILD_ARGS+=([QEMU_ARCH]='QEMU arch' [QEMU_PREFIX]='QEMU prefix' [QEMU_DIR]='QEMU dir')
+  # if necessary add QEMU arguments
+  [ -n "${QEMU_ARCH}" ] && BUILD_ARGS+=([QEMU_ARCH]='QEMU arch' [QEMU_PREFIX]='QEMU prefix' [QEMU_DIR]='QEMU dir')
 
-	[ -n "${TARGET_ARCH_TAG}" ] && BUILD_ARGS+=([TARGET_ARCH_TAG]='Target arch')
+  [ -n "${TARGET_ARCH_TAG}" ] && BUILD_ARGS+=([TARGET_ARCH_TAG]='Target arch')
 
-	##	get build args from any extra_build_args() in build.conf
-	#
-	# extra_build_args will have the current ${arch} available to it, so this
-	# is useful in the (ideally uncommom) scenario of a build arg varying
-	# between architectures
-	ifFuncSetVar extra_build_args extra_build_args
+  ##  get build args from any extra_build_args() in build.conf
+  #
+  # extra_build_args will have the current ${arch} available to it, so this
+  # is useful in the (ideally uncommom) scenario of a build arg varying
+  # between architectures
+  ifFuncSetVar extra_build_args extra_build_args
 
-	# expect any return from extra_build_args in the form:
-	#		<key>=<description>=<value>
-	#
-	# multiples can be provided, one per line.
-	[ -n "${extra_build_args:-}" ] && while read -r line; do
-		arg_name="${line%%=*}"
-		declare "${arg_name}=${line##*=}"
-		BUILD_ARGS+=(["${arg_name}"]="$(echo "${line}" | cut -d'=' -f2)")
-	done < <(printf '%s\n' "${extra_build_args}")
+  # expect any return from extra_build_args in the form:
+  #    <key>=<description>=<value>
+  #
+  # multiples can be provided, one per line.
+  [ -n "${extra_build_args:-}" ] && while read -r line; do
+    arg_name="${line%%=*}"
+    declare "${arg_name}=${line##*=}"
+    BUILD_ARGS+=(["${arg_name}"]="$(echo "${line}" | cut -d'=' -f2)")
+  done < <(printf '%s\n' "${extra_build_args}")
 
-	## prepare the build command
-	#
-	# buildx is now the default
-	build_cmd=(docker buildx build --platform="${PLATFORM}" --progress="${BUILD_PROGRESS:-auto}" --load --rm)
+  ## prepare the build command
+  # buildx is now the default
+  #
+  if [ ! -z "${BUILD_MULTIARCH+set}" ]; then
+    # BUILD_MULTIARCH will do all arches at once, with buildx, and will also
+    # push from the buildx command
+    build_cmd=(docker buildx build --progress="${BUILD_PROGRESS:-auto}")
+    [ -z "${NO_PUSH}" ] && build_cmd+=('--push')
+    build_cmd+=(--platform="${platforms}")
 
-	[ ! -z "${BUILD_NO_CACHE+set}" ] && build_cmd+=('--no-cache')
-	[ -n "${BUILD_SQUASH}" ] && [ -z "${NO_BUILD_SQUASH+set}" ] \
-		&& build_cmd+=('--squash')
+    build_multiarch_tags=()
+    ifFunc get_manifest_tags \
+      && manifest_tags="$(echo "$(get_manifest_tags)" | xargs -n1 | sort -u | xargs)" \
+      && for manifest_tag in ${manifest_tags}; do
+        build_multiarch_tags+=(--tag "${DOCKER_REPO}:${manifest_tag}")
+      done
+  else
+    # if not building in one, build each arch individually
+    build_cmd=(docker buildx build --progress="${BUILD_PROGRESS:-auto}" --load --rm --platform="${PLATFORM}")
+  fi
 
-	[ -n "${BUILD_TARGET_STAGE}" ] && build_cmd+=(--target "${BUILD_TARGET_STAGE}")
+  [ ! -z "${BUILD_SHM_SIZE+set}" ] && build_cmd+=("--shm-size=${BUILD_SHM_SIZE}")
+  [ ! -z "${BUILD_NO_CACHE+set}" ] && build_cmd+=('--no-cache')
+  [ -n "${BUILD_SQUASH}" ] && [ -z "${NO_BUILD_SQUASH+set}" ] \
+    && build_cmd+=('--squash')
 
-	build_cmd+=(-f "${DOCKER_FILE}")
+  [ -n "${BUILD_TARGET_STAGE}" ] && build_cmd+=("--target=${BUILD_TARGET_STAGE}")
 
-	# add the build arguments
-	for arg in $(echo "${!BUILD_ARGS[@]}" | xargs -n1 | sort); do
-		if [ -n "${!arg}" ]; then
-			print_param "${!arg}" "${BUILD_ARGS[${arg}]}"
-			build_cmd+=(--build-arg "${arg}=${!arg}")
-		fi
-	done
+  build_cmd+=(--file "${DOCKER_FILE}")
 
-	# if required add '--platform'
-	[ -n "${BUILD_PLATFORM_ARG}" ] && [ -n "${PLATFORM}" ] && \
-		build_cmd+=(--platform "${PLATFORM}")
+  # add the build arguments
+  for arg in $(echo "${!BUILD_ARGS[@]}" | xargs -n1 | sort); do
+    if [ -n "${!arg}" ]; then
+      print_param "${!arg}" "${BUILD_ARGS[${arg}]}"
+      build_cmd+=(--build-arg "${arg}=${!arg}")
+    fi
+  done
 
-	# add the target tag
-	[ -n "${TAG_OVERRIDE}" ] \
-		&& tag_string="${DOCKER_REPO}:${TAG_OVERRIDE}" \
-		|| tag_string="${DOCKER_REPO}:${TARGET_TAG}-${TARGET_ARCH_TAG}"
-	build_cmd+=(-t "${tag_string}")
+  # if required add '--platform'
+  [ -n "${BUILD_PLATFORM_ARG}" ] && [ -n "${PLATFORM}" ] && \
+    build_cmd+=(--platform "${PLATFORM}")
 
-	# set the context
-	build_cmd+=(.)
+  # add the target tag(s)
+  # start with any from BUILD_MULTIARCH
+  build_cmd+=("${build_multiarch_tags[@]}")
 
-	pretty_build_cmd=$(echo "${build_cmd[*]}" | sed -r -e "s/(--platform |--build-arg |-f |-t )/\\\ \n\t\1/g")
-	printf '\n--- build command ---\n%s\n\n' "${pretty_build_cmd}"
+  # then add the default
+  [ -n "${TAG_OVERRIDE}" ] \
+    && build_cmd+=(--tag "${DOCKER_REPO}:${TAG_OVERRIDE}") \
+    || build_cmd+=(--tag "${DOCKER_REPO}:${TARGET_TAG}-${TARGET_ARCH_TAG}")
 
-	# if allowed, build
-	[[ -n "${NOOP+set}" || -n "${NO_BUILD+set}" ]] && printf '[NOOP]\n\n' && continue
+  # set the context
+  build_cmd+=(.)
+
+  pretty_break_points="(--platform\S* |--build-arg |--file |--tag )"
+  pretty_build_cmd=$(echo "${build_cmd[*]}" | sed -r -e "s/${pretty_break_points}/\\\ \n\t\1/g")
+  printf '\n--- build command ---\n%s\n\n' "${pretty_build_cmd}"
+
+  # if allowed, build
+  [[ -n "${NOOP+set}" || -n "${NO_BUILD+set}" ]] && printf '[NOOP]\n\n' && continue
   "${build_cmd[@]}"
-	echo
+  echo
 done
 
 set +e
