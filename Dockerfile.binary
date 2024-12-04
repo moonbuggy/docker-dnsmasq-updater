@@ -19,8 +19,9 @@ WORKDIR "${APP_PATH}"
 
 # Python wheels from pre_build
 ARG IMPORTS_DIR=".imports"
-ARG TARGET_ARCH_TAG
-COPY _dummyfile "${IMPORTS_DIR}/${TARGET_ARCH_TAG}*" "/${IMPORTS_DIR}/"
+ARG TARGETARCH="amd64"
+ARG TARGETVARIANT=""
+COPY _dummyfile "${IMPORTS_DIR}/${TARGETARCH}${TARGETVARIANT}*" "/${IMPORTS_DIR}/"
 
 # setup Python requirements
 ARG AGENT_STRING=''
@@ -29,7 +30,7 @@ COPY "./requirements${AGENT_STRING}.txt" ./requirements.txt
 ARG API_BACKEND="${API_BACKEND:-}"
 RUN echo "${API_BACKEND}" >> ./requirements.txt
 
-# use PyPi proxy, if provided
+# use a PyPi proxy, if provided
 ARG PYPI_INDEX="https://pypi.org/simple"
 RUN (mv /etc/pip.conf /etc/pip.conf.bak || true) \
 	&& printf '%s\n' '[global]' "  index-url = ${PYPI_INDEX}" \
@@ -74,11 +75,9 @@ RUN echo "APP_PATH=${APP_PATH}" >> "${BUILDER_ROOT}/etc/contenv_extra" \
 
 ## build the final image
 #
-FROM "${FROM_IMAGE}"
+FROM "${FROM_IMAGE}" AS standalone
 
 ARG BUILDER_ROOT
 COPY --from=builder "${BUILDER_ROOT}/" /
-
-ENV S6_CMD_WAIT_FOR_SERVICES_MAXTIME=0
 
 HEALTHCHECK --start-period=10s --timeout=10s CMD /healthcheck.sh

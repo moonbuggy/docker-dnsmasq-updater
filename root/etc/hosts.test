@@ -1,0 +1,2 @@
+# this is used by the healthcheck script to check dnsmasq is ready
+123.123.123.123 dnsmasq.00test00
