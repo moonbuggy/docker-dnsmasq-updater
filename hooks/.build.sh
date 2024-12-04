@@ -294,7 +294,9 @@ if [ -f "./README.md" ]; then
     echo '[NOOP]'
   else
     echo 'Pushing README.md..'
-    docker pushrm "${DOCKER_REPO}" -f ./README.md
+    [ -f README.docker.md ] \
+      && docker pushrm "${DOCKER_REPO}" -f ./README.docker.md \
+      || docker pushrm "${DOCKER_REPO}" -f ./README.md
   fi
 else
   echo "No README.md to push."

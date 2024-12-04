@@ -6,12 +6,12 @@ DEBUG_STRING=''
 # debug flag needs to be set by the command line rather than in the config
 # file as it's handled earlier. otherwise debug messaging won't start until
 # after the config file has been parsed
-if [ ! -z ${DMU_DEBUG+set} ] || [ ! -z ${DEBUG+set} ]; then
-	case $(echo ${DMU_DEBUG:-$DEBUG} | tr '[:upper:]' '[:lower:]') in
+if [ ! -z ${DNS_DEBUG+set} ] || [ ! -z ${DEBUG+set} ]; then
+	case $(echo ${DNS_DEBUG:-$DEBUG} | tr '[:upper:]' '[:lower:]') in
 		on|true|yes|1)
-			DEBUG_STRING='--debug'
+			DEBUG_STRING='--log-debug'
 			;;
 	esac
 fi
 
-${APP_PATH}/${FILE_STRING} -c ${APP_PATH}/conf/${FILE_STRING}.conf ${DEBUG_STRING}
+dnsmasq --keep-in-foreground ${DEBUG_STRING}
