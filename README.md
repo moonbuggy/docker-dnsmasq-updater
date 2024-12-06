@@ -80,6 +80,8 @@ Docker:
                         'unix://var/run/docker.sock')
   -n NETWORK, --network NETWORK
                         Docker network to monitor
+  -T, --traefik_labels
+                        read Traefik labels for hostnames
 
 DNS:
   -i IP, --ip IP        default IP for the DNS records
@@ -180,6 +182,8 @@ Docker:
                         path to the docker socket (default: 'unix://var/run/docker.sock')
   -n NETWORK, --network NETWORK
                         Docker network to monitor
+  -T, --traefik_labels
+                        read Traefik labels for hostnames
 
 API:
   -s SERVER, --api_server SERVER
@@ -454,6 +458,7 @@ environment variables.
 *   `DMU_PREPEND_WWW`    - add _www_ subdomains to all hostnames (default: _False_)
 *   `DMU_DOCKER_SOCKET`  - path to the docker socket (default: _unix://var/run/docker.sock_)
 *   `DMU_NETWORK`        - Docker network to monitor, defaults to none/disabled
+*   `DMU_TRAEFIK_LABELS` - read Traefik labels for hostnames (default: _False_)
 *   `DMU_SERVER`         - _dnsmasq_ server address
 *   `DMU_PORT`           - _dnsmasq_ server SSH port (default: _22_)
 *   `DMU_LOGIN`          - _dnsmasq_ server login name
@@ -589,6 +594,9 @@ the manager's default IP.
 Any defined `extra_hosts` will be given the IP from that definition.
 
 ### Use with Traefik
+To configure Docker Dnsmasq Updater to pull Traefik hostnames use the flag
+`--traefik_labels` or the environment variable `DMU_TRAEFIK_LABELS=true`
+
 Docker Dnsmasq Updater will pull Traefik hostnames set on containers via the
 ``traefik.http.routers.<router>.rule=Host(`<hostname>`)`` label, including
 multiple hostnames specified in the
