@@ -348,12 +348,12 @@ class DockerHandler():
             hostnames.append(labels['dnsmasq.updater.host'])
         except KeyError:
             pass
-
-        pattern = re.compile(r'Host\(`([^`]*)`\)')
-        for key, value in labels.items():
-            if key.startswith('traefik.http.routers.'):
-                for match in pattern.finditer(value):
-                    hostnames.append(match.group(1))
+        if self.params.traefik_labels:
+            pattern = re.compile(r'Host\(`([^`]*)`\)')
+            for key, value in labels.items():
+                if key.startswith('traefik.http.routers.'):
+                    for match in pattern.finditer(value):
+                        hostnames.append(match.group(1))
 
         ip = self.get_hostip(container)
         if ip is not None:
@@ -535,6 +535,7 @@ class ConfigHandler():
             'config_file': CONFIG_FILE,
             'docker_socket': 'unix://var/run/docker.sock',
             'network': '',
+            'traefik_labels': False,
             'api_server': '',
             'api_port': '8080',
             'api_key': '',
@@ -601,6 +602,7 @@ class ConfigHandler():
                 config.read(self.args.config_file)
                 self.defaults.update(dict(config.items("general")))
                 self.defaults.update(dict(config.items("docker")))
+                self.defaults['traefik_labels'] = config['docker'].getboolean('traefik_labels')
                 self.defaults.update(dict(config.items("api")))
 
                 self.logger.debug('Args from config file: %s', json.dumps(self.defaults, indent=4))
@@ -628,6 +630,9 @@ class ConfigHandler():
         docker_group.add_argument(
             '-n', '--network', action='store', metavar='NETWORK',
             help='Docker network to monitor')
+        docker_group.add_argument(
+            '-T', '--traefik_labels', action='store_true',
+            help='read Traefik labels for hostnames')
         api_group.add_argument(
             '-s', '--api_server', action='store', metavar='SERVER',
             help='API server address')

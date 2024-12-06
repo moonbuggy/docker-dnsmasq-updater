@@ -16,6 +16,9 @@ if env | grep -q 'DMU_'; then
 
 	[ ! -z "${DMU_DOCKER_SOCKET}" ] && sed "s!^docker_socket.*!docker_socket=${DMU_DOCKER_SOCKET}!" -i $CONFIG_FILE
 	[ ! -z "${DMU_NETWORK}" ] && sed "s!^network.*!network=${DMU_NETWORK}!" -i $CONFIG_FILE
+	[ ! -z "${DMU_TRAEFIK_LABELS}" ] \
+		&& sed -E "s!^#?traefik_labels.*!traefik_labels=${DMU_TRAEFIK_LABELS}!" -i $CONFIG_FILE \
+		|| sed -E "s!^#?traefik_labels.*!traefik_labels=False!" -i $CONFIG_FILE
 	[ ! -z "${DMU_SERVER}" ] && sed "s!^server.*!server=${DMU_SERVER}!" -i $CONFIG_FILE
 
 	[ ! -z "${DMU_PREPEND_WWW}" ] \

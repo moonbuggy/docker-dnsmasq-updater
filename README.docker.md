@@ -271,6 +271,7 @@ environment variables.
 *   `DMU_PREPEND_WWW`    - add _www_ subdomains to all hostnames (default: _False_)
 *   `DMU_DOCKER_SOCKET`  - path to the docker socket (default: _unix://var/run/docker.sock_)
 *   `DMU_NETWORK`        - Docker network to monitor, defaults to none/disabled
+*   `DMU_TRAEFIK_LABELS` - read Traefik labels for hostnames (default: _False_)
 *   `DMU_SERVER`         - _dnsmasq_ server address
 *   `DMU_PORT`           - _dnsmasq_ server SSH port (default: _22_)
 *   `DMU_LOGIN`          - _dnsmasq_ server login name

@@ -645,12 +645,13 @@ class DockerHandler():
         except KeyError:
             pass
 
-        pattern = re.compile(r'Host\(`([^`]*)`\)')
+        if self.params.traefik_labels:
+            pattern = re.compile(r'Host\(`([^`]*)`\)')
 
-        for key, value in labels.items():
-            if key.startswith('traefik.http.routers.'):
-                for match in pattern.finditer(value):
-                    hostnames.append(match.group(1))
+            for key, value in labels.items():
+                if key.startswith('traefik.http.routers.'):
+                    for match in pattern.finditer(value):
+                        hostnames.append(match.group(1))
 
         ip = self.get_hostip(container)
         if ip is not None:
@@ -802,6 +803,7 @@ class ConfigHandler():
             'prepend_www': False,
             'docker_socket': 'unix://var/run/docker.sock',
             'network': '',
+            'traefik_labels': False,
             'server': '',
             'port': '22',
             'login': '',
@@ -874,6 +876,7 @@ class ConfigHandler():
                 self.defaults.update(dict(config.items("dns")))
                 self.defaults.update(dict(config.items("hosts")))
                 self.defaults.update(dict(config.items("docker")))
+                self.defaults['traefik_labels'] = config['docker'].getboolean('traefik_labels')
                 self.defaults['prepend_www'] = config['dns'].getboolean('prepend_www')
                 self.defaults.update(dict(config.items("api")))
 
@@ -915,6 +918,9 @@ class ConfigHandler():
         docker_group.add_argument(
             '-n', '--network', action='store', metavar='NETWORK',
             help='Docker network to monitor')
+        docker_group.add_argument(
+            '-T', '--traefik_labels', action='store_true',
+            help='read Traefik labels for hostnames')
 
         dns_group = parser.add_argument_group(title='DNS')
         dns_group.add_argument(
