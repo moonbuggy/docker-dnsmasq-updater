@@ -125,7 +125,7 @@ RUN if [ ! -z "${APK_PROXY}" ]; then \
 	&& touch \
 		/etc/s6-overlay/s6-rc.d/user/contents.d/dnsmasq \
 		/etc/s6-overlay/s6-rc.d/dnsmasq-updater/dependencies.d/dnsmasq \
-	&& cp -f healthcheck-dnsmasq.sh healthcheck.sh
+	&& add-contenv DNSMASQ_SEVER_MODE="1"
 
 ENV DMU_HOSTS_LOCATION="local" \
 	DMU_HOSTS_FILE="/etc/hosts.updater" \
