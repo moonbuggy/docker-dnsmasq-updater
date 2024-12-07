@@ -234,9 +234,9 @@ anywhere and specify the location with `--config_file`.
 
 | image | tags |
 | :--- | :--- |
-| standalone/manager | \<version\>, \<version\>-script, latest, script |
-| agent | \<version\>-agent, agent |
-| standalone/manager with dnsmasq | \<version\>-server, server |
+| standalone/manager | script, latest, \<version\>, \<version\>-script |
+| agent | agent, \<version\>-agent |
+| standalone/manager with dnsmasq | server, \<version\>-server |
 
 The default `latest` tag and the `script` tag point to the standalone/manager
 script. Agent images will be tagged `agent`.
@@ -299,18 +299,19 @@ services:
     image: moonbuggy2000/dnsmasq-updater:server
     hostname: dmu-dns-server
     environment:
-      - DMU_DOMAIN=docker # optional, this is the default
+      - DMU_DOMAIN=docker  # optional, this is the default
       - DMU_IP=<frontend_IP>
-      - DMU_NETWORK=traefik # optional
+      - DMU_NETWORK=traefik  # optional
+      - DMU_LABELS_FROM=traefik  # optional
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     ports:
       - 53:53/tcp
       - 53:53/udp
-    networks: # optional
+    networks:  # optional
       - traefik
 
-networks: # optional
+networks:  # optional
   traefik:
     external: true
 ```
@@ -347,7 +348,7 @@ services:
       - DMU_IP=<frontend_IP>
       - DMU_KEY=/app/keys/id_rsa
       - DMU_LOGIN=<login>
-      - DMU_PREPEND_WWW=true # optional
+      - DMU_PREPEND_WWW=true  # optional
       - DMU_HOSTS_FILE=/opt/etc/hosts.swarm
       - DMU_SERVER=<dnsmasq_server_IP>
       - DMU_API_PORT=8080
@@ -362,11 +363,12 @@ services:
     deploy:
       mode: global
     environment:
-      - DMU_DEBUG=false # optional
+      - DMU_DEBUG=false  # optional
       - DMU_NETWORK=traefik  # optional
       - DMU_API_SERVER=dmu
       - DMU_API_PORT=8080
       - DMU_API_KEY=<api_key>
+      - DMU_LABELS_FROM=traefik  # optional
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     networks:
@@ -448,10 +450,9 @@ environment variables.
 
 ##### Docker Dnsmasq Updater environment
 *   `DMU_MODE`           - operation mode (accepts: _standalone_, _manager_; default: _standalone_)
-*   `DMU_HOSTS_LOCATION` - location of hosts file (accepts: _local_, _remote_, default: _remote_)
+*   `DMU_HOSTS_LOCATION` - location of hosts file (accepts: _local_, _remote_; default: _remote_)
 *   `DMU_IP`             - default IP for the DNS records
 *   `DMU_DOMAIN`         - domain/zone for the DNS records (default: _docker_)
-*   `DMU_PREPEND_WWW`    - add _www_ subdomains to all hostnames (default: _False_)
 *   `DMU_DOCKER_SOCKET`  - path to the docker socket (default: _unix://var/run/docker.sock_)
 *   `DMU_NETWORK`        - Docker network to monitor, defaults to none/disabled
 *   `DMU_SERVER`         - _dnsmasq_ server address
@@ -465,6 +466,8 @@ environment variables.
 *   `DMU_API_ADDRESS`    - address for API to listen on (default: _0.0.0.0_)
 *   `DMU_API_PORT`       - port for API to listen on (default: _8080_)
 *   `DMU_API_KEY`        - API access key
+*   `DMU_LABELS_FROM`    - add hostnames from labels set by other services (accepts: _traefik_, _none_; default: _traefik_)
+*   `DMU_PREPEND_WWW`    - add _www_ subdomains to all hostnames (default: _False_)
 *   `DMU_DEBUG`          - set _True_ to enable debug log output
 *   `TZ`		             - set timezone
 
@@ -477,6 +480,7 @@ environment variables.
 *   `DMU_API_RETRY`      - delay (in seconds) before retrying failed connection (default: _10_)
 *   `DMU_API_CHECK`      - delay (in seconds) between checking the API server status (default: _60_)
 *   `DMU_CLEAN_ON_EXIT`  - delete this device's hosts from the API when the Agent shuts down (default: _True_)
+*   `DMU_LABELS_FROM`    - add hostnames from labels set by other services (accepts: _traefik_, _none_; default: _traefik_)
 *   `DMU_DEBUG`          - set _True_ to enable debug log output
 *   `TZ`		             - set timezone
 
@@ -589,10 +593,13 @@ the manager's default IP.
 Any defined `extra_hosts` will be given the IP from that definition.
 
 ### Use with Traefik
-Docker Dnsmasq Updater will pull Traefik hostnames set on containers via the
-``traefik.http.routers.<router>.rule=Host(`<hostname>`)`` label, including
-multiple hostnames specified in the
+If `DMU_LABELS_FROM` is set, Docker Dnsmasq Updater will pull Traefik hostnames
+set on containers via the ``traefik.http.routers.<router>.rule=Host(`<hostname>`)``
+label, including multiple hostnames specified in the
 ``Host(`<hostname1>`) || Host(`<hostname2>`)`` form.
+
+For the time being, this is enabled by default in images (but not in the script).
+At some future point this will be disabled by default in both cases.
 
 As all containers joining a monitored network are considered valid, if you
 monitor a user-defined network that Traefik uses you don't need to set any
