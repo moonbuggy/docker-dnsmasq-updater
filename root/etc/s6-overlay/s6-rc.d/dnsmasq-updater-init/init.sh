@@ -18,6 +18,9 @@ if env | grep -q 'DMU_'; then
 	[ ! -z "${DMU_NETWORK}" ] && sed "s!^network.*!network=${DMU_NETWORK}!" -i $CONFIG_FILE
 	[ ! -z "${DMU_SERVER}" ] && sed "s!^server.*!server=${DMU_SERVER}!" -i $CONFIG_FILE
 
+	[ ! -z "${DMU_LABELS_FROM}" ] \
+		&& sed -E "s!^#?labels_from.*!labels_from=${DMU_LABELS_FROM}!" -i $CONFIG_FILE
+
 	[ ! -z "${DMU_PREPEND_WWW}" ] \
 		&& sed -E "s!^#?prepend_www.*!prepend_www=${DMU_PREPEND_WWW}!" -i $CONFIG_FILE \
 		|| sed -E "s!^#?prepend_www.*!prepend_www=False!" -i $CONFIG_FILE

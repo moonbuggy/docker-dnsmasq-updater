@@ -448,9 +448,10 @@ environment variables.
 
 ##### Docker Dnsmasq Updater environment
 *   `DMU_MODE`           - operation mode (accepts: _standalone_, _manager_; default: _standalone_)
-*   `DMU_HOSTS_LOCATION` - location of hosts file (accepts: _local_, _remote_, default: _remote_)
+*   `DMU_HOSTS_LOCATION` - location of hosts file (accepts: _local_, _remote_; default: _remote_)
 *   `DMU_IP`             - default IP for the DNS records
 *   `DMU_DOMAIN`         - domain/zone for the DNS records (default: _docker_)
+*   `DMU_LABELS_FROM`    - add hostnames from labels set by reverse proxies (accepts: _traefik_, _none_; default: _traefik_)
 *   `DMU_PREPEND_WWW`    - add _www_ subdomains to all hostnames (default: _False_)
 *   `DMU_DOCKER_SOCKET`  - path to the docker socket (default: _unix://var/run/docker.sock_)
 *   `DMU_NETWORK`        - Docker network to monitor, defaults to none/disabled
