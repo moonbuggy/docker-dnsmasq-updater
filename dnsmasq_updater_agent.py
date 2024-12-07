@@ -349,11 +349,12 @@ class DockerHandler():
         except KeyError:
             pass
 
-        pattern = re.compile(r'Host\(`([^`]*)`\)')
-        for key, value in labels.items():
-            if key.startswith('traefik.http.routers.'):
-                for match in pattern.finditer(value):
-                    hostnames.append(match.group(1))
+        if self.params.labels_from is not None:
+            traefik_pattern = re.compile(r'Host\(`([^`]*)`\)')
+            for key, value in labels.items():
+                if 'traefik' in self.params.labels_from and key.startswith('traefik.http.routers.'):
+                    for match in traefik_pattern.finditer(value):
+                        hostnames.append(match.group(1))
 
         ip = self.get_hostip(container)
         if ip is not None:
@@ -535,6 +536,7 @@ class ConfigHandler():
             'config_file': CONFIG_FILE,
             'docker_socket': 'unix://var/run/docker.sock',
             'network': '',
+            'labels_from': None,
             'api_server': '',
             'api_port': '8080',
             'api_key': '',
@@ -601,12 +603,20 @@ class ConfigHandler():
                 config.read(self.args.config_file)
                 self.defaults.update(dict(config.items("general")))
                 self.defaults.update(dict(config.items("docker")))
+                self.defaults.update(dict(config.items("dns")))
                 self.defaults.update(dict(config.items("api")))
 
                 self.logger.debug('Args from config file: %s', json.dumps(self.defaults, indent=4))
             else:
                 self.logger.error('Config file (%s) does not exist.',
                                   self.args.config_file)
+
+    @staticmethod
+    def parse_commas(this_string):
+        """Convert a comma separated string into a list variable."""
+        if this_string:
+            return this_string.split(',')
+        return None
 
     def parse_command_line(self):
         """
@@ -620,14 +630,19 @@ class ConfigHandler():
         parser.set_defaults(**self.defaults)
 
         docker_group = parser.add_argument_group(title='Docker')
-        api_group = parser.add_argument_group(title='API')
-
         docker_group.add_argument(
             '-D', '--docker_socket', action='store', metavar='SOCKET',
             help='path to the docker socket (default: \'%(default)s\')')
         docker_group.add_argument(
             '-n', '--network', action='store', metavar='NETWORK',
             help='Docker network to monitor')
+
+        dns_group = parser.add_argument_group(title='DNS')
+        dns_group.add_argument(
+            '-L', '--labels_from', action='store', metavar='PROXIES', type=self.parse_commas,
+            help='add hostnames from labels set by other services (default: \'%(default)s\')')
+
+        api_group = parser.add_argument_group(title='API')
         api_group.add_argument(
             '-s', '--api_server', action='store', metavar='SERVER',
             help='API server address')

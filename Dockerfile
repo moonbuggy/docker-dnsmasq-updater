@@ -106,6 +106,11 @@ FROM "${FROM_IMAGE}" AS standalone
 ARG BUILDER_ROOT
 COPY --from=builder "${BUILDER_ROOT}/" /
 
+# This is new functionality and it makes sense for this to be unset by default
+# over the longer term, but for now default to doing 'treafik' automatically so
+# people have some time to notice the change.
+ENV DMU_LABELS_FROM="traefik"
+
 HEALTHCHECK --start-period=10s --timeout=10s CMD /healthcheck.sh
 
 ## build the dnsmasq-bundled image
