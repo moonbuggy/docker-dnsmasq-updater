@@ -645,12 +645,12 @@ class DockerHandler():
         except KeyError:
             pass
 
-        pattern = re.compile(r'Host\(`([^`]*)`\)')
-
-        for key, value in labels.items():
-            if key.startswith('traefik.http.routers.'):
-                for match in pattern.finditer(value):
-                    hostnames.append(match.group(1))
+        if self.params.labels_from is not None:
+            traefik_pattern = re.compile(r'Host\(`([^`]*)`\)')
+            for key, value in labels.items():
+                if 'traefik' in self.params.labels_from and key.startswith('traefik.http.routers.'):
+                    for match in traefik_pattern.finditer(value):
+                        hostnames.append(match.group(1))
 
         ip = self.get_hostip(container)
         if ip is not None:
@@ -799,6 +799,7 @@ class ConfigHandler():
         self.defaults = {
             'config_file': CONFIG_FILE,
             'domain': 'docker',
+            'labels_from': None,
             'prepend_www': False,
             'docker_socket': 'unix://var/run/docker.sock',
             'network': '',
@@ -882,6 +883,13 @@ class ConfigHandler():
                 self.logger.error('Config file (%s) does not exist.',
                                   self.args.config_file)
 
+    @staticmethod
+    def parse_commas(this_string):
+        """Convert a comma separated string into a list variable."""
+        if this_string:
+            return this_string.split(',')
+        return None
+
     def parse_command_line(self):
         """
         Parse command line arguments.
@@ -923,6 +931,9 @@ class ConfigHandler():
         dns_group.add_argument(
             '-d', '--domain', action='store', metavar='DOMAIN',
             help='domain/zone for the DNS record (default: \'%(default)s\')')
+        dns_group.add_argument(
+            '-L', '--labels_from', action='store', metavar='PROXIES', type=self.parse_commas,
+            help='add hostnames from labels set by other services (standalone only, default: \'%(default)s\')')
         dns_group.add_argument(
             '-w', '--prepend_www', action='store_true',
             help='add \'www\' subdomains for all hostnames')
